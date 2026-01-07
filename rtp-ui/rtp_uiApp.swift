@@ -9,9 +9,10 @@ import SwiftUI
 
 @main
 struct rtp_uiApp: App {
+    
     var body: some Scene {
         WindowGroup {
-            ContentView()
+           ContentView()
         }
     }
 }
