@@ -6,8 +6,13 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		68BDFDCA2F11E8D1002A2DA6 /* RTPmacos.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 68BDFDC92F11E8D1002A2DA6 /* RTPmacos.xcframework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		686B783E2F0E3150006DF34C /* rtp-ui.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "rtp-ui.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		68BDFDC92F11E8D1002A2DA6 /* RTPmacos.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = RTPmacos.xcframework; path = ../rtp/RTPmacos.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -23,6 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				68BDFDCA2F11E8D1002A2DA6 /* RTPmacos.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -33,6 +39,7 @@
 			isa = PBXGroup;
 			children = (
 				686B78402F0E3150006DF34C /* rtp-ui */,
+				68BDFDC82F11E8D1002A2DA6 /* Frameworks */,
 				686B783F2F0E3150006DF34C /* Products */,
 			);
 			sourceTree = "<group>";
@@ -43,6 +50,14 @@
 				686B783E2F0E3150006DF34C /* rtp-ui.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		68BDFDC82F11E8D1002A2DA6 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				68BDFDC92F11E8D1002A2DA6 /* RTPmacos.xcframework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -251,9 +266,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;
@@ -292,9 +308,10 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_INCOMING_NETWORK_CONNECTIONS = NO;
-				ENABLE_OUTGOING_NETWORK_CONNECTIONS = NO;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_RESOURCE_ACCESS_AUDIO_INPUT = NO;
 				ENABLE_RESOURCE_ACCESS_BLUETOOTH = NO;

@@ -7,8 +7,12 @@
 
 import Foundation
 import AVFoundation
+import VideoToolbox
+import RTPmacos
 
 class CameraManager: NSObject {
+    
+    private var compressionSessionOut: VTCompressionSession?
     
     //  object that performs real-time capture and adds appropriate inputs and outputs
     private let captureSession = AVCaptureSession()
@@ -17,7 +21,7 @@ class CameraManager: NSObject {
     private var deviceInput : AVCaptureDeviceInput?
     
     //  object used to have access to video frames for processing
-    private var videoOutput: AVCaptureVideoDataOutput?
+    private var videoOutput: AVCaptureVideoDataOutput? /// these lowkey aren't used but i'm keeping them here
     
     //  object that represents the hardware or virtual capture device
     //  that can provide one or more streams of media of a particular type
@@ -58,7 +62,9 @@ class CameraManager: NSObject {
     }()
     
     override init() {
-        super.init( )
+        super.init()
+        
+        run_runtime_server()    /// our rust code!
         
         Task {
             await configureSession()
@@ -80,6 +86,7 @@ class CameraManager: NSObject {
         // Start the configuration,
         // marking the beginning of changes to the running capture session’s configuration
         captureSession.beginConfiguration()
+        captureSession.sessionPreset = .hd1280x720
         
         // At the end of the execution of the method commits the configuration to the running session
         defer {
@@ -107,6 +114,32 @@ class CameraManager: NSObject {
         // Adds the input and the output to the AVCaptureSession
         captureSession.addInput(deviceInput)
         captureSession.addOutput(videoOutput)
+        
+        
+        let videoEncoderSpecification = [kVTVideoEncoderSpecification_EnableLowLatencyRateControl: true as CFBoolean] as CFDictionary
+        
+        let err = VTCompressionSessionCreate(allocator: kCFAllocatorDefault,
+                                             width: Int32(1280),
+                                             height: Int32(720),
+                                             // MARK: Copied from above ^ in session create
+                                             codecType: kCMVideoCodecType_H264,
+                                             encoderSpecification: videoEncoderSpecification,
+                                             imageBufferAttributes: nil,
+                                             compressedDataAllocator: nil,
+                                             outputCallback: outputCallback,
+                                             refcon: Unmanaged.passUnretained(self).toOpaque(), // WHAT DOES THIS DO?
+                                             compressionSessionOut: &compressionSessionOut)
+        
+        guard err == noErr, let compressionSession = compressionSessionOut else {
+            print("VTCompressionSession creation failed")
+            return
+        }
+        
+        VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_ProfileLevel, value: kVTProfileLevel_H264_Main_AutoLevel)
+        VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        VTSessionSetProperty(compressionSession, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: 30 as CFNumber)
+        VTCompressionSessionPrepareToEncodeFrames(compressionSession)
     }
     
     //  will only be responsible for starting the camera session.
@@ -117,6 +150,35 @@ class CameraManager: NSObject {
     }
 }
 
+// MARK: WHAT THE FUCK!
+private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameRefCon, status, infoFlags, sampleBuffer in
+    
+    guard let refcon = refcon,
+          status == noErr,
+          let sampleBuffer = sampleBuffer else {
+        print("H264Coder outputCallback sampleBuffer NULL or status: \(status)")
+        return
+    }
+    
+    if (!CMSampleBufferDataIsReady(sampleBuffer))
+    {
+        print("didCompressH264 data is not ready...");
+        return;
+    }
+    
+    guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else {
+        print("Failed to convert buffer")
+        return
+    }
+    
+    var length = 0
+    var dataPointer: UnsafeMutablePointer<Int8>?
+    let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
+    
+    rust_send_frame(dataPointer, UInt(length))
+}
+
+
 extension CameraManager : AVCaptureVideoDataOutputSampleBufferDelegate { // honestly what the fuck
     
     func captureOutput(_ output: AVCaptureOutput,
@@ -126,5 +188,27 @@ extension CameraManager : AVCaptureVideoDataOutputSampleBufferDelegate { // hone
         guard let currentFrame = sampleBuffer.cgImage else { return }
         
         addToPreviewStream?(currentFrame)
+        
+        guard let session = compressionSessionOut,
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
+        
+        let presentationTimeStamp = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        
+        let status = VTCompressionSessionEncodeFrame(
+            session,
+            imageBuffer: pixelBuffer,
+            presentationTimeStamp: presentationTimeStamp,
+            duration: .invalid,
+            frameProperties: nil,
+            sourceFrameRefcon: nil,
+            infoFlagsOut: nil
+        )
+        
+        if status != noErr {
+            print("Encoding failed: \(status)")
+        }
+
     }
 }
