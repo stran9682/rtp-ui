@@ -3,6 +3,9 @@ name = "rtp"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["staticlib", "lib"]
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 bytes = "1.11.0"

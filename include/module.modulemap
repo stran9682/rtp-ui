@@ -1,0 +1,4 @@
+module RTPmacos {
+  header "rtpmacos.h"
+  export *
+}
