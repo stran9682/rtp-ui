@@ -1,27 +1,19 @@
-use std::{ env, io, net::SocketAddr, sync::Arc};
+use std::{ env, io, sync::Arc};
 use tokio::{ net::{UdpSocket}};
-use rtp::session_management::{PeerManager, connect_to_signaling_server, run_signaling_server};
+use rtp::session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
 
     let args : Vec<String> = env::args().skip(1).collect(); 
 
-    // second arg is where your rtp packets are received, otherwise default to 8080
-    let local_addr_str = if args.len() == 2 {
-        args[1].clone()
-    } else {
-        "127.0.0.1:8080".to_string()
-    };
+    // Dynamically assign port
+    let local_addr_str = "127.0.0.1:0";
 
-    let local_addr: SocketAddr = local_addr_str
-        .parse()
-        .expect("Invalid local address format");
-
-    let socket = UdpSocket::bind(local_addr).await?;
+    let socket = UdpSocket::bind(local_addr_str).await?;
     let socket = Arc::new(socket);
 
-    let peer_manager = Arc::new(PeerManager::new(local_addr));
+    let peer_manager = Arc::new(PeerManager::new(socket.local_addr()?));
 
     // get peers
     if let Some(server_addr) = args.first() {
@@ -91,6 +83,6 @@ async fn rtp_receiver(
             println!("new peer from: {}", addr);
         }
 
-        print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
+        println!("{}", bytes_read);
     }
 }
