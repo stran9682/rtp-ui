@@ -3,6 +3,14 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-void rust_send_frame(const uint8_t *data, uintptr_t len);
+typedef enum StreamType {
+  Audio,
+  Video,
+} StreamType;
 
-void run_runtime_server(void);
+bool rust_send_frame(const uint8_t *data, uintptr_t len, enum StreamType stream);
+
+void run_runtime_server(bool is_host,
+                        enum StreamType stream,
+                        const uint8_t *host_addr,
+                        uintptr_t host_addr_len);

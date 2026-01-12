@@ -92,22 +92,29 @@ pub extern "C" fn run_runtime_server (
 
     // this might be bad, but I'm just making you the host 
     // if you failed to give a correct address.
+    // there's probably something wrong here too...
     let host_addr_str = match host_addr_str {
         Ok(str) => str,
         Err(_) => {
             is_host = true;
+            eprintln!("Bro gave a bad address. LMFAO!");
             "invalid"
         }
     };
 
     runtime().spawn(async move {
-        if let Err(e) = network_loop_server(rx, is_host, host_addr_str).await {
+        if let Err(e) = network_loop_server(rx, is_host, host_addr_str, stream).await {
             eprintln!("Something terrible happened. Not you though. You are amazing. Always: {}", e);
         }
     });
 }
 
-async fn network_loop_server (rx: mpsc::Receiver<EncodedFrame>, is_host: bool, server_addr: &str) -> io::Result<()> {
+async fn network_loop_server (
+    rx: mpsc::Receiver<EncodedFrame>, 
+    is_host: bool, 
+    server_addr: &str,
+    stream_type : StreamType
+) -> io::Result<()> {
 
     let local_addr_str = "127.0.0.1:0";
 
@@ -120,12 +127,12 @@ async fn network_loop_server (rx: mpsc::Receiver<EncodedFrame>, is_host: bool, s
         let peer_manager_clone = Arc::clone(&peer_manager);
         
         runtime().spawn(async move {
-            if let Err(e) = run_signaling_server(peer_manager_clone).await {
+            if let Err(e) = run_signaling_server(peer_manager_clone, stream_type).await {
                 eprintln!("Signaling server error: {}", e);
             }
         });
     } else {
-        connect_to_signaling_server(server_addr, Arc::clone(&peer_manager)).await?
+        connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), stream_type).await?
     }
 
     let sender_socket = Arc::clone(&socket);

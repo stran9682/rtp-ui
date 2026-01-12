@@ -1,6 +1,6 @@
 use std::{ env, io, sync::Arc};
 use tokio::{ net::{UdpSocket}};
-use rtp::session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server};
+use rtp::{interop::StreamType, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -19,7 +19,9 @@ async fn main() -> io::Result<()> {
     if let Some(server_addr) = args.first() {
         println!("Connecting:");
 
-        connect_to_signaling_server(server_addr, Arc::clone(&peer_manager)).await?;
+        if let Err(e) = connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), StreamType::Video).await {
+            eprintln!("server error getting addresses: {}", e);
+        };
 
     // or be responsible for distributing them (rendevouz)
     } else {
@@ -27,7 +29,7 @@ async fn main() -> io::Result<()> {
 
         let peer_manager_clone = Arc::clone(&peer_manager);
         tokio::spawn(async move {
-            if let Err(e) = run_signaling_server(peer_manager_clone).await {
+            if let Err(e) = run_signaling_server(peer_manager_clone, StreamType::Video).await {
                 eprintln!("Signaling server error: {}", e);
             }
         });
@@ -74,7 +76,7 @@ async fn rtp_receiver(
     peer_manager: Arc<PeerManager>
 ) -> io::Result<()> {
 
-    let mut buffer = [0u8; 1024];
+    let mut buffer = [0u8; 1500];
     
     loop {
         let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
