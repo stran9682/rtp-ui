@@ -64,7 +64,8 @@ class CameraManager: NSObject {
     override init() {
         super.init()
         
-        run_runtime_server()    /// our rust code!
+        run_runtime_server(true, StreamType(1), nil, 0)    /// our rust code!
+        //run_runtime_server(true, StreamType(0), nil, 0)
         
         Task {
             await configureSession()
@@ -175,7 +176,7 @@ private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameR
     var dataPointer: UnsafeMutablePointer<Int8>?
     let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
     
-    rust_send_frame(dataPointer, UInt(length))
+    rust_send_frame(dataPointer, UInt(length), StreamType(1))
 }
 
 

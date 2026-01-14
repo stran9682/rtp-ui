@@ -10,9 +10,22 @@ import SwiftUI
 @main
 struct rtp_uiApp: App {
     
+    @State var state = AppState(isPresented: true, isHost: false)
+    
     var body: some Scene {
         WindowGroup {
-           ContentView()
+            if state.isPresented {
+                JoinView(state: $state)
+            }
+            else {
+                ContentView()
+            }
         }
     }
+}
+
+struct AppState {
+    var isPresented: Bool
+    var isHost: Bool
+    var address: String = ""
 }
