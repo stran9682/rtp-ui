@@ -95,3 +95,49 @@ impl Header {
         }
     }
 }
+
+pub fn add_payload (
+    mut header : BytesMut,
+    payload : &[u8],
+    packet_type : FragmentedPacket
+) -> BytesMut {
+
+    /*
+        +---------------+
+        |0|1|2|3|4|5|6|7|
+        +-+-+-+-+-+-+-+-+
+        |F|NRI|  Type   |
+        +---------------+
+     */
+
+    let nalu_nri = payload[0] & 0x60;
+    let nalu_type = payload[0] & 0x1F;
+
+    let b0 = 28 | nalu_nri; // 28 to indicate FU-A packet type
+    header.put_u8(b0);
+
+    let mut b1 = nalu_type;
+    
+    match packet_type {
+        FragmentedPacket::End => {
+            b1 |= 1 << 7;
+        }
+        FragmentedPacket::Start => {
+            b1 |= 1 << 6;
+        }
+        _ => ()
+    }
+
+    header.put_u8(b1);
+
+    header.put(payload); // you naughty boy
+
+    header
+}
+
+pub enum FragmentedPacket {
+    Start,
+    End,
+    Other
+}
+

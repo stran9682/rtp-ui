@@ -22,6 +22,16 @@ pub struct EncodedFrame {
     pub data: Vec<u8>
 }
 
+enum UserType <'a> {
+    Client(&'a str),
+    Host
+}
+
+struct ServerArgs <'a> {
+    stream_type : StreamType,
+    user_type : UserType<'a>
+}
+
 fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         Runtime::new().expect("Runtime creation failed. Loser")
@@ -36,7 +46,7 @@ pub extern "C" fn rust_send_frame(
 ) -> bool {
 
     // I might switch this to getting a channel from an array.
-    // -> allowing infinite streams
+    // -> allowing potentially infinite streams
     let tx = match stream {
         StreamType::Video => FRAME_TX.get(),
         StreamType::Audio => AUDIO_TX.get()
@@ -50,6 +60,7 @@ pub extern "C" fn rust_send_frame(
         }
     };
 
+    // look into zero copy!
     let frame =  EncodedFrame {
         data: unsafe { std::slice::from_raw_parts(data, len).to_vec() },
     };
@@ -97,13 +108,20 @@ pub extern "C" fn run_runtime_server (
         Ok(str) => str,
         Err(_) => {
             is_host = true;
-            eprintln!("Bro gave a bad address. LMFAO!");
             "invalid"
         }
     };
 
+    let server_args = ServerArgs {
+        stream_type : stream,
+        user_type : match is_host {
+            true =>  UserType::Host,
+            false => UserType::Client(host_addr_str)
+        }
+    };
+
     runtime().spawn(async move {
-        if let Err(e) = network_loop_server(rx, is_host, host_addr_str, stream).await {
+        if let Err(e) = network_loop_server(rx, server_args).await {
             eprintln!("Something terrible happened. Not you though. You are amazing. Always: {}", e);
         }
     });
@@ -111,9 +129,7 @@ pub extern "C" fn run_runtime_server (
 
 async fn network_loop_server (
     rx: mpsc::Receiver<EncodedFrame>, 
-    is_host: bool, 
-    server_addr: &str,
-    stream_type : StreamType
+    server_args : ServerArgs <'_>
 ) -> io::Result<()> {
 
     let local_addr_str = "127.0.0.1:0";
@@ -123,16 +139,19 @@ async fn network_loop_server (
 
     let peer_manager = Arc::new(PeerManager::new(socket.local_addr()?));
 
-    if is_host {
-        let peer_manager_clone = Arc::clone(&peer_manager);
+    match server_args.user_type {
+        UserType::Client(addr) => {
+            connect_to_signaling_server(addr, Arc::clone(&peer_manager), server_args.stream_type).await?
+        }
+        UserType::Host => {
+            let peer_manager_clone = Arc::clone(&peer_manager);
         
-        runtime().spawn(async move {
-            if let Err(e) = run_signaling_server(peer_manager_clone, stream_type).await {
-                eprintln!("Signaling server error: {}", e);
-            }
-        });
-    } else {
-        connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), stream_type).await?
+            runtime().spawn(async move {
+                if let Err(e) = run_signaling_server(peer_manager_clone, server_args.stream_type).await {
+                    eprintln!("Signaling server error: {}", e);
+                }
+            });
+        }
     }
 
     let sender_socket = Arc::clone(&socket);
@@ -187,5 +206,7 @@ async fn rtp_receiver(
         }
 
         print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
+
+        // TODO : Send to swift
     }
 }
