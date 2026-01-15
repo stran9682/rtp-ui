@@ -172,12 +172,39 @@ private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameR
         return
     }
     
+    // the ACTUAL data
     var length = 0
     var dataPointer: UnsafeMutablePointer<Int8>?
     let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
     
-    rust_send_frame(dataPointer, UInt(length), StreamType(1))
+    guard status == noErr, let pointer = dataPointer else {
+        return
+    }
+    
+    // the data to the PARENT object (sample buffer)
+    let unmanagedBuffer = Unmanaged.passRetained(sampleBuffer) // increments the counter
+    let context = unmanagedBuffer.toOpaque() // get a pointer to pass to C
+    
+    rust_send_frame(dataPointer, UInt(length), StreamType(1), context, swift_release_frame_buffer)
 }
+
+@_cdecl("swift_release_frame_buffer")
+func swift_release_frame_buffer(_ context: UnsafeMutableRawPointer) {
+    // Release the manual retain
+    let _ = Unmanaged<CMSampleBuffer>.fromOpaque(context).takeRetainedValue()
+}
+
+typealias ReleaseCallback = @convention(c) (UnsafeMutableRawPointer) -> Void
+
+// this is really BAD do not do this!
+@_silgen_name("rust_send_frame")
+func rust_send_frame(
+    _ data: UnsafePointer<Int8>?,
+    _ length: UInt,
+    _ stream_type: StreamType,
+    _ context: UnsafeMutableRawPointer,
+    _ release_callback: ReleaseCallback
+)
 
 
 extension CameraManager : AVCaptureVideoDataOutputSampleBufferDelegate { // honestly what the fuck
