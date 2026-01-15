@@ -130,7 +130,7 @@ pub fn add_payload (
 
     header.put_u8(b1);
 
-    header.put(payload); // you naughty boy
+    header.put(payload);
 
     header
 }

@@ -18,8 +18,22 @@ pub enum StreamType {
     Video,
 }
 
-pub struct EncodedFrame {
-    pub data: Vec<u8>
+type ReleaseCallback = extern "C" fn(*mut std::ffi::c_void);
+
+// sometimes reasonable men do unreasonable things
+unsafe impl Send for EncodedFrame {} 
+
+pub struct EncodedFrame  {
+    data: *const u8,
+    len: usize,
+    context: *mut std::ffi::c_void,
+    release_callback: ReleaseCallback,
+}
+
+impl Drop for EncodedFrame {
+    fn drop(&mut self) {
+        (self.release_callback)(self.context);
+    }
 }
 
 enum UserType <'a> {
@@ -42,7 +56,9 @@ fn runtime() -> &'static Runtime {
 pub extern "C" fn rust_send_frame(
     data: *const u8,
     len: usize,
-    stream: StreamType
+    stream: StreamType,
+    context: *mut std::ffi::c_void,
+    release_callback: ReleaseCallback
 ) -> bool {
 
     // I might switch this to getting a channel from an array.
@@ -60,9 +76,12 @@ pub extern "C" fn rust_send_frame(
         }
     };
 
-    // look into zero copy!
+    // zero copy?
     let frame =  EncodedFrame {
-        data: unsafe { std::slice::from_raw_parts(data, len).to_vec() },
+        data,
+        len,
+        context,
+        release_callback
     };
 
     match tx.try_send(frame) {
@@ -182,8 +201,13 @@ async fn rtp_sender(
             continue;
         }
 
+        // construct the slice on the SPOT!
+        let data = unsafe {
+            std::slice::from_raw_parts(frame.data, frame.len)
+        };
+
         for addr in peers.iter() {
-            match socket.send_to(&frame.data, addr).await {
+            match socket.send_to(data, addr).await {
                 Ok(_) => {},
                 Err(e) => eprintln!("Failed to send to {}: {}", addr, e),
             }
