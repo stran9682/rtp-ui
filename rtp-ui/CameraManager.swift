@@ -188,23 +188,12 @@ private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameR
     rust_send_frame(dataPointer, UInt(length), StreamType(1), context, swift_release_frame_buffer)
 }
 
-@_cdecl("swift_release_frame_buffer")
-func swift_release_frame_buffer(_ context: UnsafeMutableRawPointer) {
+func swift_release_frame_buffer(_ context: UnsafeMutableRawPointer?) {
+    guard let context = context else { return }
+    
     // Release the manual retain
     let _ = Unmanaged<CMSampleBuffer>.fromOpaque(context).takeRetainedValue()
 }
-
-typealias ReleaseCallback = @convention(c) (UnsafeMutableRawPointer) -> Void
-
-// this is really BAD do not do this!
-@_silgen_name("rust_send_frame")
-func rust_send_frame(
-    _ data: UnsafePointer<Int8>?,
-    _ length: UInt,
-    _ stream_type: StreamType,
-    _ context: UnsafeMutableRawPointer,
-    _ release_callback: ReleaseCallback
-)
 
 
 extension CameraManager : AVCaptureVideoDataOutputSampleBufferDelegate { // honestly what the fuck
