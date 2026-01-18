@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		68228E562F18C68E00EE92F9 /* RTPmacos.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 68BDFDC92F11E8D1002A2DA6 /* RTPmacos.xcframework */; };
+		68228E832F1CC6FA00EE92F9 /* RTPmacos.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 68BDFDC92F11E8D1002A2DA6 /* RTPmacos.xcframework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,7 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				68228E562F18C68E00EE92F9 /* RTPmacos.xcframework in Frameworks */,
+				68228E832F1CC6FA00EE92F9 /* RTPmacos.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
