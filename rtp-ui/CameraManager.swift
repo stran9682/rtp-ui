@@ -151,12 +151,12 @@ class CameraManager: NSObject {
     }
 }
 
-// MARK: WHAT THE FUCK!
 private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameRefCon, status, infoFlags, sampleBuffer in
     
     guard let refcon = refcon,
           status == noErr,
-          let sampleBuffer = sampleBuffer else {
+          let sampleBuffer = sampleBuffer
+    else {
         print("H264Coder outputCallback sampleBuffer NULL or status: \(status)")
         return
     }
@@ -172,20 +172,77 @@ private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameR
         return
     }
     
-    // the ACTUAL data
+    // MARK: Transmitting SPS and PPS data.
+    // https://stackoverflow.com/questions/28396622/extracting-h264-from-cmblockbuffer
+    
+//    guard let attachmentsArray:CFArray = CMSampleBufferGetSampleAttachmentsArray(
+//        sampleBuffer,
+//        createIfNecessary: false
+//    ) else { return }
+//    
+//    // this becomes a really redundant check. Only works once!
+//    if (CFArrayGetCount(attachmentsArray) > 0) {
+//    
+//        let cfDict = CFArrayGetValueAtIndex(attachmentsArray, 0)
+//        let dictRef: CFDictionary = unsafeBitCast(cfDict, to: CFDictionary.self)
+//
+//        let value = CFDictionaryGetValue(dictRef, unsafeBitCast(kCMSampleAttachmentKey_NotSync, to: UnsafeRawPointer.self))
+//        
+//        if(value == nil) {
+//            var description: CMFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)!
+//            
+//                        
+//            // First, get SPS
+//            var sparamSetCount: size_t = 0
+//            var sparamSetSize: size_t = 0
+//            var sparameterSetPointer: UnsafePointer<UInt8>?
+//            var s_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+//                description,
+//                parameterSetIndex: 0,
+//                parameterSetPointerOut: &sparameterSetPointer,
+//                parameterSetSizeOut: &sparamSetSize,
+//                parameterSetCountOut: &sparamSetCount,
+//                nalUnitHeaderLengthOut: nil)
+//            
+//            if (s_statusCode == noErr){
+//                rust_send_frame(sparameterSetPointer, UInt(sparamSetSize), StreamType(1), Unmanaged.passRetained(description).toOpaque(), swift_release_frame_buffer)
+//            }
+//            
+//            // Then, get PPS
+//            var pparamSetCount: size_t = 0
+//            var pparamSetSize: size_t = 0
+//            var pparameterSetPointer: UnsafePointer<UInt8>?
+//            var p_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+//                description,
+//                parameterSetIndex: 1,
+//                parameterSetPointerOut: &pparameterSetPointer,
+//                parameterSetSizeOut: &pparamSetSize,
+//                parameterSetCountOut: &pparamSetCount,
+//                nalUnitHeaderLengthOut: nil)
+//            
+//            if (p_statusCode == noErr) {
+//                rust_send_frame(pparameterSetPointer, UInt(pparamSetSize), StreamType(1), Unmanaged.passRetained(description).toOpaque(), swift_release_frame_buffer)
+//            }
+//            
+//            let spsArray = Array(UnsafeBufferPointer(start: pparameterSetPointer, count: pparamSetSize))
+//            print("let sps: [UInt8] = \(spsArray)")
+//        }
+//    }
+    
+    // MARK: Pointers to data
+    
+    // the h.264 data, get pointer to cmblockbuffer
     var length = 0
     var dataPointer: UnsafeMutablePointer<Int8>?
     let status = CMBlockBufferGetDataPointer(dataBuffer, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &dataPointer)
     
-    guard status == noErr, let pointer = dataPointer else {
-        return
-    }
+    guard status == noErr, let dataPointer = dataPointer else { return }
     
-    // the data to the PARENT object (sample buffer)
-    let unmanagedBuffer = Unmanaged.passRetained(sampleBuffer) // increments the counter
-    let context = unmanagedBuffer.toOpaque() // get a pointer to pass to C
+    // now, the data to the holding object (sample buffer)
+    let unmanagedBuffer = Unmanaged.passRetained(sampleBuffer)  // increments the counter
+    let context = unmanagedBuffer.toOpaque()                    // get a pointer to pass to C
     
-    rust_send_frame(dataPointer, UInt(length), StreamType(1), context, swift_release_frame_buffer)
+    rust_send_frame(dataPointer, UInt(length), context, swift_release_frame_buffer)
 }
 
 func swift_release_frame_buffer(_ context: UnsafeMutableRawPointer?) {
