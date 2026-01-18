@@ -85,6 +85,6 @@ async fn rtp_receiver(
             println!("new peer from: {}", addr);
         }
 
-        println!("{}", bytes_read);
+        println!("{:08b}{:08b}", buffer[1], buffer[2]);
     }
 }

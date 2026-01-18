@@ -103,11 +103,21 @@ pub fn add_payload (
 ) -> BytesMut {
 
     /*
-        +---------------+
-        |0|1|2|3|4|5|6|7|
-        +-+-+-+-+-+-+-+-+
-        |F|NRI|  Type   |
-        +---------------+
+        +---------------+---------------+
+        |0|1|2|3|4|5|6|7|0|1|2|3|4|5|6|7|
+        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+        |F|NRI|  Type   |S|E|R|  Type   |
+        +---------------+---------------+
+
+        F           : should be 0 
+        NRI         : Essentialy level of importance, needs to be copied
+        Type (1)    : Type of header. 28 To indicate this is a fragment
+        S(tart)     : indicates this is the start
+        E(nd)       : indicates this is the end
+        R(eserved)  : always 0
+        Type (2)    : Kind of payload, needs to be copied
+
+        Original header needs to be reconstructed!
      */
 
     let nalu_nri = payload[0] & 0x60;

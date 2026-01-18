@@ -12,7 +12,6 @@ typedef void (*ReleaseCallback)(void*);
 
 bool rust_send_frame(const uint8_t *data,
                      uintptr_t len,
-                     enum StreamType stream,
                      void *context,
                      ReleaseCallback release_callback);
 

@@ -2,7 +2,7 @@ use std::{net::SocketAddr, sync::{Arc, OnceLock}};
 use bytes::{BufMut, BytesMut};
 use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::{Mutex, OnceCell}};
 
-use crate::{interop::StreamType};
+use crate::interop::StreamType;
 
 const BUFFER_SIZE: usize = 1500;
 
