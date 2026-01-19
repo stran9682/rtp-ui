@@ -90,8 +90,9 @@ pub extern "C" fn run_runtime_server (
     // there's probably something wrong here too...
     let host_addr_str = match host_addr_str {
         Ok(str) => str,
-        Err(_) => {
+        Err(e) => {
             is_host = true;
+            eprintln!("Failed to convert address: {:?}", e);
             "invalid"
         }
     };
