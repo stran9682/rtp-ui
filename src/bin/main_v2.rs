@@ -1,6 +1,7 @@
 use std::{ env, io, sync::Arc};
+use bytes::BufMut;
 use tokio::{ net::{UdpSocket}};
-use rtp::{interop::StreamType, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
+use rtp::{interop::StreamType, packets::rtp::RTPHeader, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -85,6 +86,13 @@ async fn rtp_receiver(
             println!("new peer from: {}", addr);
         }
 
-        println!("{:08b}{:08b}", buffer[1], buffer[2]);
+        let mut bytes = bytes::BytesMut::new();
+        bytes.put_slice(&buffer[..bytes_read]);
+
+        let rtp = RTPHeader::deserialize(&mut bytes);
+
+        println!("{}", rtp.version);
+
+        println!("{:08b}{:08b}", buffer[0], buffer[1]);
     }
 }

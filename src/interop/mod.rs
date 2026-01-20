@@ -138,7 +138,6 @@ async fn network_loop_server (
         }
     }
 
-
     let sender_socket = Arc::clone(&socket);
     let sender_peers = Arc::clone(&peer_manager);
     

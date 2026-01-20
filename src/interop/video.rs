@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{net::UdpSocket, sync::mpsc};
 
-use crate::session_management::peer_manager::PeerManager;
+use crate::{packets::rtp::RTPSession, session_management::peer_manager::PeerManager};
 
 const AVCC_HEADER_LENGTH: usize = 4;
 
@@ -38,6 +38,14 @@ pub async fn rtp_frame_sender(
     peer_manager: Arc<PeerManager>,
     mut rx: mpsc::Receiver<EncodedFrame>
 ) {    
+
+    let mut rtp_session = RTPSession{
+        current_sequence_num: 0,
+        timestamp: 0,
+        increment: 3_000,
+        ssrc: 1
+    };
+
     loop {
 
         let frame = match rx.recv().await {
@@ -59,10 +67,10 @@ pub async fn rtp_frame_sender(
         let nal_units = get_nal_units(data);
 
         for nal_unit in nal_units {
-            let fragments = get_fragments(nal_unit);
+            let fragments = get_fragments(nal_unit, &mut rtp_session);
 
             for fragment in fragments {
-                
+
                 for addr in peers.iter() {
                     match socket.send_to(&fragment, addr).await {
                         Ok(_) => {},
@@ -70,12 +78,14 @@ pub async fn rtp_frame_sender(
                     }
                 }
             }
-        }   
+        }
+
+        rtp_session.next_packet(); // this will increment the timestamp by 3000. (90kHz / 30 fps)
     }
 }
 
 
-fn get_fragments(payload : &[u8]) -> Vec<Bytes> {
+fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession) -> Vec<Bytes> {
     let mut payloads = Vec::new();
 
     let max_fragment_size = 1200;
@@ -90,7 +100,11 @@ fn get_fragments(payload : &[u8]) -> Vec<Bytes> {
 
         let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
 
-        let mut out = BytesMut::with_capacity(2 + current_fragment_size);
+        let rtp_header = rtp_session.get_packet().serialize();  // this will move the sequence number by 1
+
+        let mut out = BytesMut::with_capacity(2 + current_fragment_size + rtp_header.len());
+
+        out.put_slice(&rtp_header);
 
         /*
             +---------------+---------------+
@@ -185,10 +199,10 @@ fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
 
         buffer_offset += AVCC_HEADER_LENGTH + nal_unit_length;
 
-        println!("{}", data.len());
-        println!("{:?}", header);
-        println!("{}", payload.len());
-        println!("{}", nal_unit_length);
+        // println!("{}", data.len());
+        // println!("{:?}", header);
+        // println!("{}", payload.len());
+        // println!("{}", nal_unit_length);
                     
     }
 

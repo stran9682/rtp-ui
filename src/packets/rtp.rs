@@ -4,7 +4,22 @@
     https://github.com/webrtc-rs/rtcp/blob/main/src/source_description/mod.rs
 */ 
 
-use bytes::{self, Buf, BufMut, Bytes, BytesMut};
+use bytes::{self, Buf, BufMut, BytesMut};
+
+/*
+    *  0                   1                   2                   3
+    *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    * |V=2|P|X|  CC   |M|     PT      |       sequence number         |
+    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    * |                           timestamp                           |
+    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+    * |           synchronization source (SSRC) identifier            |
+    * +=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+=+
+    * |            contributing source (CSRC) identifiers             |
+    * |                             ....                              |
+    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+*/
 
 pub struct RTPHeader {
     pub version: u8,
@@ -26,7 +41,7 @@ pub struct RTPHeader {
 // }
 
 impl RTPHeader {
-    pub fn serialize(&self) -> Bytes {
+    pub fn serialize(&self) -> BytesMut {
 
         let mut buf = BytesMut::with_capacity(64);
 
@@ -54,11 +69,13 @@ impl RTPHeader {
         buf.put_u32(self.timestamp);
         buf.put_u32(self.ssrc);
 
+        //println!("{:08b}{:08b}", buf[0], buf[1]);
+
         // for csrc in &self.csrc {
         //     buf.put_u32(*csrc);
         // }
 
-        buf.freeze()
+        buf
     }
 
 
@@ -99,15 +116,17 @@ impl RTPHeader {
 pub struct RTPSession {
     pub current_sequence_num : u16,
     pub timestamp : u32,
-    pub clock_rate_khz : u32,
+    pub increment : u32,
     pub ssrc : u32
 }
 
 impl RTPSession {
-    pub fn next_packet (&mut self) -> RTPHeader {
+    pub fn next_packet (&mut self) {
+        self.timestamp += self.increment// roll over needed.
+    }
 
+    pub fn get_packet (&mut self) -> RTPHeader {
         self.current_sequence_num += 1;
-        self.timestamp += self.clock_rate_khz; // roll over needed.
 
         RTPHeader { 
             version: 2,
@@ -121,4 +140,4 @@ impl RTPSession {
             // csrc:  
         }
     }
-}
+ }
