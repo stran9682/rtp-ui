@@ -91,7 +91,8 @@ async fn rtp_receiver(
 
         let rtp = RTPHeader::deserialize(&mut bytes);
 
-        println!("{}", rtp.version);
+        println!("{}", rtp.timestamp);
+        println!("{}", rtp.marker);
 
         println!("{:08b}{:08b}", buffer[0], buffer[1]);
     }

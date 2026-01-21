@@ -1,11 +1,21 @@
-use std::sync::Arc;
+use std::{io, sync::Arc};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{net::UdpSocket, sync::mpsc};
 
+use crate::packets::rtp::RTPHeader;
 use crate::{packets::rtp::RTPSession, session_management::peer_manager::PeerManager};
 
 const AVCC_HEADER_LENGTH: usize = 4;
+
+pub struct PlayoutBufferNode {
+    arrival_time : u128,
+    rtp_timestamp : u32,
+    playout_time : u128, 
+    coded_data : Bytes
+}
+
 
 #[repr(C)]
 pub enum FrameType {
@@ -65,9 +75,10 @@ pub async fn rtp_frame_sender(
         };
 
         let nal_units = get_nal_units(data);
+        let mut nal_units = nal_units.iter().peekable();
 
-        for nal_unit in nal_units {
-            let fragments = get_fragments(nal_unit, &mut rtp_session);
+        while let Some(nal_unit) = nal_units.next() {
+            let fragments = get_fragments(nal_unit, &mut rtp_session, nal_units.peek().is_none());
 
             for fragment in fragments {
 
@@ -85,10 +96,10 @@ pub async fn rtp_frame_sender(
 }
 
 
-fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession) -> Vec<Bytes> {
+fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession, is_last_unit: bool) -> Vec<Bytes> {
     let mut payloads = Vec::new();
 
-    let max_fragment_size = 1200;
+    let max_fragment_size = 1200; // low key a magic number...
     let mut nalu_data_index = 1;
     let nalu_data_length = payload.len() - nalu_data_index; 
     let mut nalu_data_remaining = nalu_data_length;
@@ -96,11 +107,28 @@ fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession) -> Vec<Bytes> {
     let nalu_nri = payload[0] & 0x60;
     let nalu_type = payload[0] & 0x1F;
 
+    if payload.len() <= max_fragment_size {
+
+        let rtp_header = rtp_session.get_packet(is_last_unit);
+
+        let rtp_header = rtp_header.serialize();
+
+        let mut out = BytesMut::with_capacity(payload.len() + rtp_header.len());
+
+        out.put(rtp_header);
+        out.put(payload);
+
+        payloads.push(out.freeze());
+        return payloads;
+    }
+
     while nalu_data_remaining > 0 {
 
         let current_fragment_size = std::cmp::min(max_fragment_size, nalu_data_remaining);
 
-        let rtp_header = rtp_session.get_packet().serialize();  // this will move the sequence number by 1
+        let rtp_header = rtp_session.get_packet(
+            is_last_unit && max_fragment_size >= nalu_data_remaining // VERY last one
+        ).serialize(); // this will move the sequence number by 1
 
         let mut out = BytesMut::with_capacity(2 + current_fragment_size + rtp_header.len());
 
@@ -150,6 +178,8 @@ fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession) -> Vec<Bytes> {
 
 fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
 
+    println!("{}", data.len());
+
     let mut nal_units = Vec::new();
 
     /*
@@ -189,7 +219,7 @@ fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
         };
 
         // this shouldn't be possible. BUT if it is, just ignore it. Move on
-        if nal_unit_length <= 0 {
+        if nal_unit_length == 0 {
             break;
         }
         
@@ -207,4 +237,49 @@ fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
     }
 
     nal_units
+}
+
+pub async fn rtp_frame_receiver(
+    socket: Arc<UdpSocket>,
+    peer_manager: Arc<PeerManager>,
+    media_clock_rate: u32
+) -> io::Result<()> {
+
+    let mut buffer = [0u8; 1500];
+    
+    loop {
+        let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
+
+        let now = SystemTime::now();
+
+        let duration_since = now
+            .duration_since(UNIX_EPOCH);
+
+        let duration_since = match duration_since {
+            Ok(yay) => yay,
+            Err(_) => {
+                return Err(io::Error::new(io::ErrorKind::InvalidData, "holy what happened??"));
+            }
+        };
+
+        let arrival_time = duration_since.as_millis() * (media_clock_rate as u128);
+
+        if peer_manager.add_peer(addr).await {
+            println!("new peer from: {}", addr);
+        }
+
+        let mut data = BytesMut::with_capacity(bytes_read);
+        let header = RTPHeader::deserialize(&mut data);
+
+        let node = PlayoutBufferNode {
+            arrival_time,
+            rtp_timestamp : header.timestamp,
+            playout_time : 0,
+            coded_data : data.freeze()
+        };
+
+        print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
+
+        // TODO : Send to swift
+    }
 }

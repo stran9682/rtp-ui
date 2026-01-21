@@ -122,17 +122,17 @@ pub struct RTPSession {
 
 impl RTPSession {
     pub fn next_packet (&mut self) {
-        self.timestamp += self.increment// roll over needed.
+        self.timestamp = self.timestamp.wrapping_add(self.increment);
     }
 
-    pub fn get_packet (&mut self) -> RTPHeader {
-        self.current_sequence_num += 1;
+    pub fn get_packet (&mut self, is_last_unit: bool) -> RTPHeader {
+        self.current_sequence_num = self.current_sequence_num.wrapping_add(1);
 
         RTPHeader { 
             version: 2,
             padding: false,
             extension: false,
-            marker: false,
+            marker: is_last_unit,
             payload_type: 0,
             sequence_number: self.current_sequence_num, 
             timestamp: self.timestamp, 

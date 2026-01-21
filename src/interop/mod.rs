@@ -5,7 +5,7 @@ use std::{io::{self}, slice, sync::{Arc, OnceLock}};
 
 use tokio::{net::UdpSocket, runtime::Runtime, sync::mpsc};
 
-use crate::{interop::{audio::EncodedAudio, video::{EncodedFrame, ReleaseCallback, rtp_frame_sender}}, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
+use crate::{interop::{audio::{EncodedAudio, rtp_audio_receiver}, video::{EncodedFrame, ReleaseCallback, rtp_frame_receiver, rtp_frame_sender}}, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -153,6 +153,8 @@ async fn network_loop_server (
             runtime().spawn(async move {
                 rtp_frame_sender(sender_socket, sender_peers, rx).await;
             });
+
+            rtp_frame_receiver(socket, peer_manager, 90_000).await
         },
 
         StreamType::Audio => {
@@ -164,30 +166,7 @@ async fn network_loop_server (
             })?;
 
             // TODO : spawn an audio runtime.
+            rtp_audio_receiver().await
         }
-    };
-    
-
-    rtp_receiver(socket, peer_manager).await
-}
-
-
-async fn rtp_receiver(
-    socket: Arc<UdpSocket>,
-    peer_manager: Arc<PeerManager>
-) -> io::Result<()> {
-
-    let mut buffer = [0u8; 1024];
-    
-    loop {
-        let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
-
-        if peer_manager.add_peer(addr).await {
-            println!("new peer from: {}", addr);
-        }
-
-        print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
-
-        // TODO : Send to swift
     }
 }
