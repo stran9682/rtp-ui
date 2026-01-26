@@ -5,17 +5,10 @@ use bytes::{BufMut, Bytes, BytesMut};
 use tokio::{net::UdpSocket, sync::mpsc};
 
 use crate::packets::rtp::RTPHeader;
+use crate::session_management::peer_manager::{Fragment, PlayoutBufferNode};
 use crate::{packets::rtp::RTPSession, session_management::peer_manager::PeerManager};
 
 const AVCC_HEADER_LENGTH: usize = 4;
-
-pub struct PlayoutBufferNode {
-    arrival_time : u128,
-    rtp_timestamp : u32,
-    playout_time : u128, 
-    coded_data : Bytes
-}
-
 
 #[repr(C)]
 pub enum FrameType {
@@ -94,7 +87,6 @@ pub async fn rtp_frame_sender(
         rtp_session.next_packet(); // this will increment the timestamp by 3000. (90kHz / 30 fps)
     }
 }
-
 
 fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession, is_last_unit: bool) -> Vec<Bytes> {
     let mut payloads = Vec::new();
@@ -239,6 +231,47 @@ fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
     nal_units
 }
 
+pub fn rtp_to_avcc_h264 (packets : Vec<Bytes>) -> *const u8{
+    let mut payload = BytesMut::new();
+    let mut fua_buffer = BytesMut::new();
+
+    let b0 = packets[0][0];
+    let nalu_type = b0 & 0x1F;
+
+    for packet in packets {
+        match nalu_type {
+            1..=23 => {
+                payload.put_u32(packet.len() as u32);
+                payload.put(packet);
+            }
+
+            // lala skip a few. Shouldn't need these!!
+
+            28 => {
+                fua_buffer.put(packet.slice(2 as usize..)); // just payload, skip the header.
+
+                let b1 = packet[1];
+
+                if b1 & 0x40 != 0 {
+                    let nalu_ref_idc = b0 & 0x60;
+                    let fragmented_nalu_type = b1 & 0x1F;
+
+                    payload.put_u32((fua_buffer.len() + 1) as u32);
+                    
+                    payload.put_u8(nalu_ref_idc | fragmented_nalu_type);
+                    payload.put(fua_buffer);
+
+                    fua_buffer = BytesMut::new(); // real dirty, I know... clears the buffer if there's any other fua packets.
+                }
+            }
+
+            _ => () // erm
+        }
+    };
+
+    return payload.freeze().as_ptr()
+}
+
 pub async fn rtp_frame_receiver(
     socket: Arc<UdpSocket>,
     peer_manager: Arc<PeerManager>,
@@ -249,6 +282,11 @@ pub async fn rtp_frame_receiver(
     
     loop {
         let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
+
+        // there's absolutely a bug where if the time switches playout will be messed up!
+        // (ex: when there's daylight savings)
+        // but the wall clock is "technically" more stable, and less susceptible to skew
+        // bet big, take risks, that's the way.
 
         let now = SystemTime::now();
 
@@ -262,21 +300,42 @@ pub async fn rtp_frame_receiver(
             }
         };
 
-        let arrival_time = duration_since.as_millis() * (media_clock_rate as u128);
+        /*
+            Calculating Base Playout time:
 
-        if peer_manager.add_peer(addr).await {
-            println!("new peer from: {}", addr);
-        }
+            M = T * R + offset
+            d(n) = Arrival Time of Packet - Header Timestamp
+            offset = Min(d(n-w)...d(n))
+            base playout time = Timestamp + offset
+
+         */
+
+        let arrival_time = (duration_since.as_millis() * media_clock_rate as u128) / 1000;
 
         let mut data = BytesMut::with_capacity(bytes_read);
+        data.put_slice(&buffer[..bytes_read]);
+
         let header = RTPHeader::deserialize(&mut data);
+
+        let difference = arrival_time - header.timestamp as u128;
+
+        let offset = peer_manager.add_peer_get_min_window(addr, difference).await;
+
+        let base_playout_time = header.timestamp as u128 + offset;
 
         let node = PlayoutBufferNode {
             arrival_time,
             rtp_timestamp : header.timestamp,
-            playout_time : 0,
-            coded_data : data.freeze()
+            playout_time : base_playout_time,
+            coded_data : Vec::new()
         };
+
+        let fragment = Fragment {
+            sequence_num: header.sequence_number,
+            data: data.freeze()
+        };
+
+        peer_manager.add_playout_node_to_peer(addr, node, fragment).await;
 
         print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
 

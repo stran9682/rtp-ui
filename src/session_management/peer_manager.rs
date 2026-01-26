@@ -1,189 +1,120 @@
-use std::{net::SocketAddr, sync::{Arc, OnceLock}};
-use bytes::{BufMut, BytesMut};
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::{Mutex, OnceCell}};
+use std::{collections::{HashMap, VecDeque}, net::SocketAddr, u128::MAX};
+use bytes::Bytes;
+use tokio::sync::Mutex;
 
-use crate::interop::StreamType;
-
-const BUFFER_SIZE: usize = 1500;
-
-static AUDIO_PEERS: OnceLock<Arc<PeerManager>> = OnceLock::new();
-static FRAME_PEERS: OnceLock<Arc<PeerManager>> = OnceLock::new();
-static LISTENER: OnceCell<TcpListener> = OnceCell::const_new();
-
-async fn listener() -> &'static TcpListener {
-    LISTENER.get_or_init(|| async {
-        TcpListener::bind("0.0.0.0:5060").await.unwrap()
-    }).await
+pub struct PlayoutBufferNode {
+    pub arrival_time : u128,
+    pub rtp_timestamp : u32,
+    pub playout_time : u128, 
+    pub coded_data : Vec<Fragment>
 }
 
-// inject an instance of a peer manager for the server to manage
-pub async fn run_signaling_server (
-    peer_manager : Arc<PeerManager>,
-    stream_type : StreamType
-) -> io::Result<()> {
-    
-    let res = match stream_type {
-        StreamType::Audio => AUDIO_PEERS.set(Arc::clone(&peer_manager)),
-        StreamType::Video => FRAME_PEERS.set(Arc::clone(&peer_manager))
-    };
-
-    // return early. Do NOT run another instance of the server!
-    if res.is_err() || 
-        (!AUDIO_PEERS.get().is_none() && !FRAME_PEERS.get().is_none()) {
-        return Ok(()); 
-    }
-
-    loop {
-        let (mut socket, client_addr) = match listener().await.accept().await {
-            Ok(conn) => conn,
-            Err(e) => {
-                eprintln!("Failed to accept connection: {}", e);
-                continue;
-            }
-        }; 
-
-        println!("Request from {}", client_addr.to_string());
-
-        tokio::spawn(async move {
-            if let Err(e) = handle_signaling_client(&mut socket).await {
-                eprintln!("Signaling error with {}: {}", client_addr, e);
-            }
-        });
-    }
+pub struct Fragment {
+    pub sequence_num : u16,
+    pub data : Bytes
 }
 
-async fn handle_signaling_client (
-    socket : &mut TcpStream, 
-) -> io::Result<()> {
-    let mut buffer = [0; BUFFER_SIZE];
-
-    let bytes_read = socket.read(&mut buffer).await?;
-    if bytes_read == 0 {
-        return Ok(());
-    }
-
-    let remote_addr_str = std::str::from_utf8(&buffer[..bytes_read])
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    
-    // split 
-    let request: Vec<&str> = remote_addr_str
-        .lines()
-        .take_while(|line| !line.is_empty())
-        .collect();
-
-    let stream_type = match request[1] {
-        "1" => StreamType::Video,
-        "0" => StreamType::Audio,
-        _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid type"))
-    };
-
-    let remote_addr: SocketAddr = request[0]
-        .parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    let peer_manager = match stream_type {
-        StreamType::Audio => AUDIO_PEERS.get(),
-        StreamType::Video => FRAME_PEERS.get()
-    };
-
-    let peer_manager = match peer_manager {
-        Some(peer_manager) => peer_manager,
-        None => {
-            return Err(io::Error::new(io::ErrorKind::NotFound, "Peer manager not initialized"));
-        }
-    };
-
-    let is_new = peer_manager.add_peer(remote_addr).await;
-    
-    if !is_new {
-        return Ok(());
-    }
-
-    let mut response = BytesMut::with_capacity(BUFFER_SIZE);
-    response.put_slice(peer_manager.local_addr.to_string().as_bytes());
-
-    let peers = peer_manager.get_peers().await;
-
-    for addr in peers.iter() {
-        if *addr != remote_addr {
-            response.put_slice(b"\r\n");
-            response.put_slice(addr.to_string().as_bytes());
-        }
-    }
-
-    socket.write_all(&response).await?;
-
-   Ok(()) 
+pub struct Peer {
+    window : VecDeque<u128>,
+    min_window : u128,
+    playout_buffer : Vec<PlayoutBufferNode>
 }
 
-pub async fn connect_to_signaling_server(
-    server_addr: &str,
-    peer_manager: Arc<PeerManager>,
-    stream_type: StreamType
-) -> io::Result<()> {
-    let mut socket = TcpStream::connect(server_addr).await?;
-    
-    let str = peer_manager.local_addr.to_string() + "\r\n" + match stream_type {
-        StreamType::Audio => "0",
-        StreamType::Video => "1"
-    };
+impl Peer {
+    pub fn set_and_get_min_window (&mut self, difference : u128) -> u128{
 
-    println!("{str}");
+        self.window.push_front(difference);
 
-    socket.write_all(str.as_bytes()).await?;
-    
-    let mut buffer = [0u8; BUFFER_SIZE];
-    let bytes_read = socket.read(&mut buffer).await?;
-    
-    if bytes_read == 0 {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "No response from server"));
-    }
-
-    let response = str::from_utf8(&buffer[..bytes_read])
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    println!("Client List: ");
-
-    for line in response.lines() {
-        if let Ok(addr) = line.parse::<SocketAddr>() {
-           
-            let res = peer_manager.add_peer(addr).await;
-
-            println!("{}, {}", addr.to_string(), res);
+        if self.window.len() > 10 {
+            self.window.pop_back();
         }
-    }
 
-    Ok(())
+        if let Some(&min_val) = self.window.iter().min() {
+            self.min_window = min_val;
+        }
+
+        self.min_window = match self.window.iter().min() {
+            Some(val) => *val,
+            None => difference
+        };
+
+        return self.min_window
+    }
 }
 
 pub struct PeerManager {
-    addresses: Arc<Mutex<Vec<SocketAddr>>>,
-    local_addr: SocketAddr,
+    peers: Mutex<HashMap<SocketAddr, Peer>>,
+    pub local_addr: SocketAddr,
 }
 
 impl PeerManager {
     pub fn new(local_addr: SocketAddr) -> Self {
         Self {
-            addresses: Arc::new(Mutex::new(Vec::new())),
+            peers: Mutex::new(HashMap::new()),
             local_addr,
         }
     }
 
     pub async fn add_peer(&self, addr: SocketAddr) -> bool {
-        let mut addresses = self.addresses.lock().await;
-        if !addresses.contains(&addr) && addr != self.local_addr {
-            addresses.push(addr);
+        let mut peers = self.peers.lock().await;
+      
+        if  !peers.contains_key(&addr) && addr != self.local_addr {
+            peers.insert(addr, Peer{
+                window: VecDeque::new(),
+                min_window: MAX,
+                playout_buffer: Vec::new()
+            });
+
             true
         } else {
             false
         }
     }
 
-    pub fn get_addresses_handle(&self) -> Arc<Mutex<Vec<SocketAddr>>> {
-        Arc::clone(&self.addresses)
+    pub async fn add_peer_get_min_window(&self, addr: SocketAddr, difference: u128) -> u128 {
+        let mut peers = self.peers.lock().await;
+
+        if let Some(found_peer) = peers.get_mut(&addr) {
+            found_peer.set_and_get_min_window(difference)
+        } else {
+            // peers.insert(addr, Peer{
+            //     window: VecDeque::new(),
+            //     min_window: difference,
+            //     playout_buffer: Vec::new()
+            // });
+
+            difference
+        }
+    }
+
+    pub async fn add_playout_node_to_peer(&self, addr: SocketAddr, mut playout_buffer_node : PlayoutBufferNode, fragment: Fragment){
+        let mut peers = self.peers.lock().await;
+
+        let Some(peer) = peers.get_mut(&addr) else {
+            return
+        };
+
+        let timestamp = playout_buffer_node.rtp_timestamp;
+
+        match peer.playout_buffer.binary_search_by_key(&timestamp, |node| node.rtp_timestamp) {
+            Ok(index) => {
+
+                let coded_data = &mut peer.playout_buffer[index].coded_data;
+
+                match coded_data.binary_search_by_key(&fragment.sequence_num, |frag| frag.sequence_num) {
+                    _ => {
+                        coded_data.insert(index, fragment);
+                    }
+                }
+            }
+            Err(index) => {
+                playout_buffer_node.coded_data.push(fragment);
+                peer.playout_buffer.insert(index, playout_buffer_node);
+            }
+        }
     }
 
     pub async fn get_peers(&self) -> Vec<SocketAddr> {
-        self.addresses.lock().await.clone()
+        self.peers.lock().await.keys().cloned().collect()
     }
 }

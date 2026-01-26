@@ -1,11 +1,11 @@
 pub mod video;
 pub mod audio;
 
-use std::{io::{self}, slice, sync::{Arc, OnceLock}};
+use std::{io::{self}, sync::{Arc, OnceLock}};
 
 use tokio::{net::UdpSocket, runtime::Runtime, sync::mpsc};
 
-use crate::{interop::{audio::{EncodedAudio, rtp_audio_receiver}, video::{EncodedFrame, ReleaseCallback, rtp_frame_receiver, rtp_frame_sender}}, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
+use crate::{interop::{audio::{EncodedAudio, rtp_audio_receiver}, video::{EncodedFrame, ReleaseCallback, rtp_frame_receiver, rtp_frame_sender}}, session_management::{peer_manager::PeerManager, signaling_server::run_signaling_server}};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
@@ -21,17 +21,7 @@ pub enum StreamType {
     Video,
 }
 
-enum UserType <'a> {
-    Client(&'a str),
-    Host
-}
-
-struct ServerArgs <'a> {
-    stream_type : StreamType,
-    user_type : UserType<'a>
-}
-
-fn runtime() -> &'static Runtime {
+pub fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
         Runtime::new().expect("Runtime creation failed. Loser")
     })
@@ -76,44 +66,18 @@ pub extern "C" fn rust_send_frame(
 
 
 #[unsafe(no_mangle)]
-pub extern "C" fn run_runtime_server (
-    mut is_host: bool, 
-    stream: StreamType, 
-    host_addr: *const u8, 
-    host_addr_len: usize
+pub extern "C" fn run_runtime_server ( 
+    stream: StreamType
 ) {
-    let host_addr_str = unsafe { slice::from_raw_parts(host_addr, host_addr_len) };
-    let host_addr_str = str::from_utf8(host_addr_str);
-
-    // this might be bad, but I'm just making you the host 
-    // if you failed to give a correct address.
-    // there's probably something wrong here too...
-    let host_addr_str = match host_addr_str {
-        Ok(str) => str,
-        Err(e) => {
-            is_host = true;
-            eprintln!("Failed to convert address: {:?}", e);
-            "invalid"
-        }
-    };
-
-    let server_args = ServerArgs {
-        stream_type : stream,
-        user_type : match is_host {
-            true =>  UserType::Host,
-            false => UserType::Client(host_addr_str)
-        }
-    };
-
     runtime().spawn(async move {
-        if let Err(e) = network_loop_server(server_args).await {
+        if let Err(e) = network_loop_server(stream).await {
             eprintln!("Something terrible happened. Not you though. You are amazing. Always: {}", e);
         }
     });
 }
 
 async fn network_loop_server (
-    server_args : ServerArgs <'_>
+    stream_type: StreamType
 ) -> io::Result<()> {
 
     let local_addr_str = "127.0.0.1:0";
@@ -123,30 +87,23 @@ async fn network_loop_server (
 
     let peer_manager = Arc::new(PeerManager::new(socket.local_addr()?));
 
-    match server_args.user_type {
-        UserType::Client(addr) => {
-            connect_to_signaling_server(addr, Arc::clone(&peer_manager), server_args.stream_type).await?
+    let peer_manager_clone = Arc::clone(&peer_manager);        
+    runtime().spawn(async move {
+        if let Err(e) = run_signaling_server(peer_manager_clone, stream_type).await {
+            eprintln!("Signaling server error: {}", e);
         }
-        UserType::Host => {
-            let peer_manager_clone = Arc::clone(&peer_manager);
-        
-            runtime().spawn(async move {
-                if let Err(e) = run_signaling_server(peer_manager_clone, server_args.stream_type).await {
-                    eprintln!("Signaling server error: {}", e);
-                }
-            });
-        }
-    }
+    });
+
 
     let sender_socket = Arc::clone(&socket);
     let sender_peers = Arc::clone(&peer_manager);
     
-    match server_args.stream_type {
+    match stream_type {
         StreamType::Video => {
             let (tx, rx) = mpsc::channel::<EncodedFrame>(CHANNEL_BUFFER_SIZE);
 
             FRAME_TX.set(tx).map_err(|_| {
-                eprintln!("{:?} stream already initialized", server_args.stream_type);
+                eprintln!("{:?} stream already initialized", stream_type);
                 return io::Error::new(io::ErrorKind::AlreadyExists, "video stream already in use");
             })?;
 
@@ -161,7 +118,7 @@ async fn network_loop_server (
             let (tx, rx) = mpsc::channel::<EncodedAudio>(CHANNEL_BUFFER_SIZE);
 
             AUDIO_TX.set(tx).map_err(|_| {
-                eprintln!("{:?} stream already initialized", server_args.stream_type);
+                eprintln!("{:?} stream already initialized", stream_type);
                 return io::Error::new(io::ErrorKind::AlreadyExists, "audio stream already in use");
             })?;
 
