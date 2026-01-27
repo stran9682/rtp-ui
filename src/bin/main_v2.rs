@@ -1,7 +1,7 @@
 use std::{ env, io, sync::Arc};
 use bytes::BufMut;
 use tokio::{ net::{UdpSocket}};
-use rtp::{interop::StreamType, packets::rtp::RTPHeader, session_management::peer_manager::{PeerManager, connect_to_signaling_server, run_signaling_server}};
+use rtp::{interop::StreamType, packets::rtp::RTPHeader, session_management::{peer_manager::PeerManager, signaling_server::{ run_signaling_server, rust_send_h264_config}}};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -20,9 +20,9 @@ async fn main() -> io::Result<()> {
     if let Some(server_addr) = args.first() {
         println!("Connecting:");
 
-        if let Err(e) = connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), StreamType::Video).await {
-            eprintln!("server error getting addresses: {}", e);
-        };
+        // if let Err(e) = connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), StreamType::Video).await {
+        //     eprintln!("server error getting addresses: {}", e);
+        // };
 
     // or be responsible for distributing them (rendevouz)
     } else {
