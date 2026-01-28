@@ -1,7 +1,7 @@
 use std::{ env, io, sync::Arc};
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 use tokio::{ net::{UdpSocket}};
-use rtp::{interop::StreamType, packets::rtp::RTPHeader, session_management::{peer_manager::PeerManager, signaling_server::{ run_signaling_server, rust_send_h264_config}}};
+use rtp::{interop::StreamType, packets::rtp::RTPHeader, session_management::{peer_manager::PeerManager, signaling_server::{ PEER_SPECIFICATIONS, PeerSpecifications, connect_to_signaling_server, run_signaling_server}}};
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -16,25 +16,31 @@ async fn main() -> io::Result<()> {
 
     let peer_manager = Arc::new(PeerManager::new(socket.local_addr()?));
 
+    let sps= Bytes::copy_from_slice(&[0]);
+    let pps = Bytes::copy_from_slice(&[0]);
+
+    let _ = PEER_SPECIFICATIONS.set(PeerSpecifications::new(pps, sps));
+
     // get peers
     if let Some(server_addr) = args.first() {
         println!("Connecting:");
 
-        // if let Err(e) = connect_to_signaling_server(server_addr, Arc::clone(&peer_manager), StreamType::Video).await {
-        //     eprintln!("server error getting addresses: {}", e);
-        // };
+        if let Err(e) = connect_to_signaling_server(Some(server_addr), Arc::clone(&peer_manager), StreamType::Video).await {
+            eprintln!("server error getting addresses: {}", e);
+        };
 
     // or be responsible for distributing them (rendevouz)
-    } else {
-        println!("Starting Signaling Server:");
+    } 
+    
+    println!("Starting Signaling Server:");
 
-        let peer_manager_clone = Arc::clone(&peer_manager);
-        tokio::spawn(async move {
-            if let Err(e) = run_signaling_server(peer_manager_clone, StreamType::Video).await {
-                eprintln!("Signaling server error: {}", e);
-            }
-        });
-    }
+    let peer_manager_clone = Arc::clone(&peer_manager);
+    tokio::spawn(async move {
+        if let Err(e) = run_signaling_server(peer_manager_clone, StreamType::Video).await {
+            eprintln!("Signaling server error: {}", e);
+        }
+    });
+    
 
     let sender_socket = Arc::clone(&socket);
     let sender_peers = Arc::clone(&peer_manager);

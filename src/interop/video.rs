@@ -88,7 +88,7 @@ pub async fn rtp_frame_sender(
     }
 }
 
-fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession, is_last_unit: bool) -> Vec<Bytes> {
+pub fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession, is_last_unit: bool) -> Vec<Bytes> {
     let mut payloads = Vec::new();
 
     let max_fragment_size = 1200; // low key a magic number...
@@ -168,7 +168,7 @@ fn get_fragments(payload : &[u8], rtp_session : &mut RTPSession, is_last_unit: b
     payloads
 }
 
-fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
+pub fn get_nal_units(data: &[u8]) -> Vec<&[u8]> {
 
     println!("{}", data.len());
 

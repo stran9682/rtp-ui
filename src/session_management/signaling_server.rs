@@ -17,7 +17,7 @@ struct H264Args{
     pps: Bytes,
 }
 
-struct PeerSpecifications {
+pub struct PeerSpecifications {
     peer_signaling_address : Mutex<HashSet<SocketAddr>>,
     self_h264_args : H264Args
 }
@@ -41,8 +41,9 @@ impl PeerSpecifications {
     }
 }
 
-static PEER_SPECIFICATIONS : OnceLock<PeerSpecifications> = OnceLock::new();
+pub static PEER_SPECIFICATIONS : OnceLock<PeerSpecifications> = OnceLock::new();
 
+#[unsafe(no_mangle)]
 pub extern "C" fn rust_send_h264_config (
     pps: *const u8,
     pps_length: usize,
@@ -109,6 +110,8 @@ pub async fn run_signaling_server (
         (!AUDIO_PEERS.get().is_none() && !FRAME_PEERS.get().is_none()) {
         return Ok(()); 
     }
+
+    println!("{}", listener().await.local_addr().unwrap());
 
     loop {
         let (mut socket, client_addr) = match listener().await.accept().await {
@@ -206,7 +209,7 @@ async fn handle_signaling_client (
    Ok(()) 
 }
 
-async fn connect_to_signaling_server(
+pub async fn connect_to_signaling_server(
     server_addr: Option<&str>,
     peer_manager: Arc<PeerManager>,
     stream_type : StreamType
@@ -217,8 +220,6 @@ async fn connect_to_signaling_server(
     let Some(server_addr) = server_addr else {
         return Ok(());
     };
-
-    let mut socket = TcpStream::connect(server_addr).await?;   
 
     let mut packet = BytesMut::new();
 
@@ -254,11 +255,30 @@ async fn connect_to_signaling_server(
         }
     }
 
-    socket.write_all(&packet).await?;
+    let mut addresses: Vec<String> = Vec::new();
+    add_peers(&peer_manager, server_addr, &packet, &mut addresses).await?;
 
+    // do something with the PPS and SPS data
+    // update swift ui
+
+    for signaling_addr in &addresses {
+        // throwaway vector lol. don't do this.
+        add_peers(&peer_manager, signaling_addr, &packet, &mut Vec::new()).await?;
+
+        // do something with sps and pps data
+        // update swift ui
+    }
+
+    Ok(())
+}
+
+async fn add_peers (peer_manager: &Arc<PeerManager>, signaling_addr: &str, packet: &BytesMut, addresses: &mut Vec<String>) -> io::Result<()> {
     let mut buffer = [0u8; BUFFER_SIZE];
-    let bytes_read = socket.read(&mut buffer).await?;
+    let mut socket = TcpStream::connect(signaling_addr).await?;
     
+    socket.write_all(&packet).await?;
+    let bytes_read = socket.read(&mut buffer).await?;
+
     if bytes_read == 0 {
         return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "No response from server"));
     }
@@ -277,15 +297,17 @@ async fn connect_to_signaling_server(
 
     peer_manager.add_peer(media_addr).await;
 
-    for signaling_addr in &responses[4..] {
-        let signaling_addr: SocketAddr = signaling_addr
-            .parse()
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let signaling_addr: SocketAddr = signaling_addr
+        .parse()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        PEER_SPECIFICATIONS.get().unwrap().add_peer(signaling_addr).await;
+    PEER_SPECIFICATIONS.get().unwrap().add_peer(signaling_addr).await;
+
+    println!("{:?}", responses);
+
+    for response in &responses[4..] {
+        addresses.push(response.to_string());
     }
-
-    // TODO: update swift ui!
 
     Ok(())
 }

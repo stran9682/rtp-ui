@@ -115,7 +115,7 @@ async fn network_loop_server (
         },
 
         StreamType::Audio => {
-            let (tx, rx) = mpsc::channel::<EncodedAudio>(CHANNEL_BUFFER_SIZE);
+            let (tx, _rx) = mpsc::channel::<EncodedAudio>(CHANNEL_BUFFER_SIZE);
 
             AUDIO_TX.set(tx).map_err(|_| {
                 eprintln!("{:?} stream already initialized", stream_type);
