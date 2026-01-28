@@ -64,7 +64,7 @@ class CameraManager: NSObject {
     override init() {
         super.init()
         
-        run_runtime_server(true, StreamType(1), nil, 0)    /// our rust code!
+        run_runtime_server(StreamType(1))    /// our rust code!
         //run_runtime_server(true, StreamType(0), nil, 0)
         
         Task {
@@ -175,59 +175,55 @@ private let outputCallback: VTCompressionOutputCallback = { refcon, sourceFrameR
     // MARK: Transmitting SPS and PPS data.
     // https://stackoverflow.com/questions/28396622/extracting-h264-from-cmblockbuffer
     
-//    guard let attachmentsArray:CFArray = CMSampleBufferGetSampleAttachmentsArray(
-//        sampleBuffer,
-//        createIfNecessary: false
-//    ) else { return }
-//    
-//    // this becomes a really redundant check. Only works once!
-//    if (CFArrayGetCount(attachmentsArray) > 0) {
-//    
-//        let cfDict = CFArrayGetValueAtIndex(attachmentsArray, 0)
-//        let dictRef: CFDictionary = unsafeBitCast(cfDict, to: CFDictionary.self)
-//
-//        let value = CFDictionaryGetValue(dictRef, unsafeBitCast(kCMSampleAttachmentKey_NotSync, to: UnsafeRawPointer.self))
-//        
-//        if(value == nil) {
-//            var description: CMFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)!
-//            
-//                        
-//            // First, get SPS
-//            var sparamSetCount: size_t = 0
-//            var sparamSetSize: size_t = 0
-//            var sparameterSetPointer: UnsafePointer<UInt8>?
-//            var s_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-//                description,
-//                parameterSetIndex: 0,
-//                parameterSetPointerOut: &sparameterSetPointer,
-//                parameterSetSizeOut: &sparamSetSize,
-//                parameterSetCountOut: &sparamSetCount,
-//                nalUnitHeaderLengthOut: nil)
-//            
-//            if (s_statusCode == noErr){
-//                rust_send_frame(sparameterSetPointer, UInt(sparamSetSize), StreamType(1), Unmanaged.passRetained(description).toOpaque(), swift_release_frame_buffer)
-//            }
-//            
-//            // Then, get PPS
-//            var pparamSetCount: size_t = 0
-//            var pparamSetSize: size_t = 0
-//            var pparameterSetPointer: UnsafePointer<UInt8>?
-//            var p_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-//                description,
-//                parameterSetIndex: 1,
-//                parameterSetPointerOut: &pparameterSetPointer,
-//                parameterSetSizeOut: &pparamSetSize,
-//                parameterSetCountOut: &pparamSetCount,
-//                nalUnitHeaderLengthOut: nil)
-//            
-//            if (p_statusCode == noErr) {
-//                rust_send_frame(pparameterSetPointer, UInt(pparamSetSize), StreamType(1), Unmanaged.passRetained(description).toOpaque(), swift_release_frame_buffer)
-//            }
-//            
-//            let spsArray = Array(UnsafeBufferPointer(start: pparameterSetPointer, count: pparamSetSize))
-//            print("let sps: [UInt8] = \(spsArray)")
-//        }
-//    }
+    guard let attachmentsArray:CFArray = CMSampleBufferGetSampleAttachmentsArray(
+        sampleBuffer,
+        createIfNecessary: false
+    ) else { return }
+    
+    // this becomes a really redundant check. Only works once every time h264 parameters change!
+    if (CFArrayGetCount(attachmentsArray) > 0) {
+    
+        let cfDict = CFArrayGetValueAtIndex(attachmentsArray, 0)
+        let dictRef: CFDictionary = unsafeBitCast(cfDict, to: CFDictionary.self)
+
+        let value = CFDictionaryGetValue(dictRef, unsafeBitCast(kCMSampleAttachmentKey_NotSync, to: UnsafeRawPointer.self))
+        
+        if(value == nil) {
+            var description: CMFormatDescription = CMSampleBufferGetFormatDescription(sampleBuffer)!
+            
+                        
+            // First, get SPS
+            var sparamSetCount: size_t = 0
+            var sparamSetSize: size_t = 0
+            var sparameterSetPointer: UnsafePointer<UInt8>?
+            var s_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                description,
+                parameterSetIndex: 0,
+                parameterSetPointerOut: &sparameterSetPointer,
+                parameterSetSizeOut: &sparamSetSize,
+                parameterSetCountOut: &sparamSetCount,
+                nalUnitHeaderLengthOut: nil)
+        
+            // Then, get PPS
+            var pparamSetCount: size_t = 0
+            var pparamSetSize: size_t = 0
+            var pparameterSetPointer: UnsafePointer<UInt8>?
+            var p_statusCode: OSStatus = CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                description,
+                parameterSetIndex: 1,
+                parameterSetPointerOut: &pparameterSetPointer,
+                parameterSetSizeOut: &pparamSetSize,
+                parameterSetCountOut: &pparamSetCount,
+                nalUnitHeaderLengthOut: nil)
+            
+            if (p_statusCode == noErr && s_statusCode == noErr) {
+                rust_send_h264_config(pparameterSetPointer, UInt(pparamSetSize), sparameterSetPointer, UInt(sparamSetSize), nil, 0)
+            }
+            
+            let spsArray = Array(UnsafeBufferPointer(start: pparameterSetPointer, count: pparamSetSize))
+            print("let sps: [UInt8] = \(spsArray)")
+        }
+    }
     
     // MARK: Pointers to data
     
