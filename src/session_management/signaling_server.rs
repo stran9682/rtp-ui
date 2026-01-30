@@ -1,7 +1,8 @@
 use core::slice;
 use std::{collections::HashSet, net::SocketAddr, sync::{Arc, OnceLock}};
 use bytes::{BufMut, Bytes, BytesMut};
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::{Mutex, OnceCell}};
+use dashmap::DashSet;
+use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::{Mutex, OnceCell, mpsc}};
 
 use crate::{interop::{StreamType, runtime}, session_management::peer_manager::PeerManager};
 
@@ -18,26 +19,24 @@ struct H264Args{
 }
 
 pub struct PeerSpecifications {
-    peer_signaling_address : Mutex<HashSet<SocketAddr>>,
+    peer_signaling_address : DashSet<SocketAddr>,
     self_h264_args : H264Args
 }
 
 impl PeerSpecifications {
     pub fn new (pps: Bytes, sps: Bytes) -> Self {
         Self {
-            peer_signaling_address : Mutex::new(HashSet::new()),
+            peer_signaling_address : DashSet::new(),
             self_h264_args: H264Args { sps, pps }
         }
     }
 
-    pub async fn get_peers(&self) -> HashSet<SocketAddr> {
-        self.peer_signaling_address.lock().await.clone()
+    pub fn get_peers(&self) -> HashSet<SocketAddr> {
+        self.peer_signaling_address.iter().map(|addr| addr.clone()).collect()
     }
 
-    pub async fn add_peer(&self, addr: SocketAddr) {
-        let mut peers = self.peer_signaling_address.lock().await;
-
-        peers.insert(addr);
+    pub fn add_peer(&self, addr: SocketAddr) {
+        self.peer_signaling_address.insert(addr);
     }
 }
 
@@ -113,6 +112,10 @@ pub async fn run_signaling_server (
 
     println!("{}", listener().await.local_addr().unwrap());
 
+    runtime().spawn(async move {
+
+    });
+
     loop {
         let (mut socket, client_addr) = match listener().await.accept().await {
             Ok(conn) => conn,
@@ -133,6 +136,16 @@ pub async fn run_signaling_server (
             }
         });
     }
+}
+
+
+enum Events {
+    Left,
+    Joined
+}
+
+async fn event_queue_handler(receiver : mpsc::Sender<Events>) {
+
 }
 
 async fn handle_signaling_client (
@@ -179,7 +192,7 @@ async fn handle_signaling_client (
             response.put_slice(b"\r\n");
             response.put_slice(&specifications.self_h264_args.sps);
             
-            let signaling = specifications.get_peers().await;
+            let signaling = specifications.get_peers();
             for addr in signaling {
                 response.put_slice(b"\r\n");
                 response.put(addr.to_string().as_bytes());
@@ -196,13 +209,13 @@ async fn handle_signaling_client (
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    specifications.add_peer(signaling_addr).await;
+    specifications.add_peer(signaling_addr);
 
     let media_addr: SocketAddr = request[2]
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    peer_manager.add_peer(media_addr).await;
+    peer_manager.add_peer(media_addr);
 
     // TODO: Update UI
 
@@ -295,13 +308,13 @@ async fn add_peers (peer_manager: &Arc<PeerManager>, signaling_addr: &str, packe
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    peer_manager.add_peer(media_addr).await;
+    peer_manager.add_peer(media_addr);
 
     let signaling_addr: SocketAddr = signaling_addr
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    PEER_SPECIFICATIONS.get().unwrap().add_peer(signaling_addr).await;
+    PEER_SPECIFICATIONS.get().unwrap().add_peer(signaling_addr);
 
     println!("{:?}", responses);
 

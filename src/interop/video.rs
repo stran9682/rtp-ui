@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::{io, sync::Arc};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -7,6 +8,8 @@ use tokio::{net::UdpSocket, sync::mpsc};
 use crate::packets::rtp::RTPHeader;
 use crate::session_management::peer_manager::{Fragment, PlayoutBufferNode};
 use crate::{packets::rtp::RTPSession, session_management::peer_manager::PeerManager};
+
+static FRAME_OUTPUT: OnceLock<Arc<PeerManager>> = OnceLock::new();
 
 const AVCC_HEADER_LENGTH: usize = 4;
 
@@ -56,7 +59,7 @@ pub async fn rtp_frame_sender(
             None => break,
         };
 
-        let peers = peer_manager.get_peers().await;
+        let peers = peer_manager.get_peers();
         
         if peers.is_empty() {
             continue;
@@ -279,6 +282,8 @@ pub async fn rtp_frame_receiver(
 ) -> io::Result<()> {
 
     let mut buffer = [0u8; 1500];
+
+    let _ = FRAME_OUTPUT.set(Arc::clone(&peer_manager));
     
     loop {
         let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
@@ -319,7 +324,7 @@ pub async fn rtp_frame_receiver(
 
         let difference = arrival_time - header.timestamp as u128;
 
-        let offset = peer_manager.add_peer_get_min_window(addr, difference).await;
+        let offset = peer_manager.add_peer_get_min_window(addr, difference);
 
         let base_playout_time = header.timestamp as u128 + offset;
 
@@ -335,7 +340,7 @@ pub async fn rtp_frame_receiver(
             data: data.freeze()
         };
 
-        peer_manager.add_playout_node_to_peer(addr, node, fragment).await;
+        peer_manager.add_playout_node_to_peer(addr, node, fragment);
 
         print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
 

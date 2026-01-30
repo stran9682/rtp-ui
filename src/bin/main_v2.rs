@@ -63,7 +63,7 @@ async fn rtp_sender(
             continue;
         }
 
-        let peers = peer_manager.get_peers().await;
+        let peers = peer_manager.get_peers();
         
         if peers.is_empty() {
             continue;
@@ -88,7 +88,7 @@ async fn rtp_receiver(
     loop {
         let (bytes_read, addr) = socket.recv_from(&mut buffer).await?;
 
-        if peer_manager.add_peer(addr).await {
+        if peer_manager.add_peer(addr) {
             println!("new peer from: {}", addr);
         }
 

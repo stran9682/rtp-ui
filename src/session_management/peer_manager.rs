@@ -1,6 +1,6 @@
-use std::{collections::{HashMap, VecDeque}, net::SocketAddr, u128::MAX};
+use std::{collections::VecDeque, net::SocketAddr, u128::MAX};
 use bytes::Bytes;
-use tokio::sync::Mutex;
+use dashmap::DashMap;
 
 pub struct PlayoutBufferNode {
     pub arrival_time : u128,
@@ -43,20 +43,20 @@ impl Peer {
 }
 
 pub struct PeerManager {
-    peers: Mutex<HashMap<SocketAddr, Peer>>,
+    peers: DashMap<SocketAddr, Peer>,
     pub local_addr: SocketAddr,
 }
 
 impl PeerManager {
     pub fn new(local_addr: SocketAddr) -> Self {
         Self {
-            peers: Mutex::new(HashMap::new()),
+            peers: DashMap::new(),
             local_addr,
         }
     }
 
-    pub async fn add_peer(&self, addr: SocketAddr) -> bool {
-        let mut peers = self.peers.lock().await;
+    pub fn add_peer(&self, addr: SocketAddr) -> bool {
+        let peers = &self.peers;
       
         if  !peers.contains_key(&addr) && addr != self.local_addr {
             peers.insert(addr, Peer{
@@ -71,10 +71,10 @@ impl PeerManager {
         }
     }
 
-    pub async fn add_peer_get_min_window(&self, addr: SocketAddr, difference: u128) -> u128 {
-        let mut peers = self.peers.lock().await;
+    pub fn add_peer_get_min_window(&self, addr: SocketAddr, difference: u128) -> u128 {
+        let peers = &self.peers;
 
-        if let Some(found_peer) = peers.get_mut(&addr) {
+        if let Some(mut found_peer) = peers.get_mut(&addr) {
             found_peer.set_and_get_min_window(difference)
         } else {
             // peers.insert(addr, Peer{
@@ -87,10 +87,10 @@ impl PeerManager {
         }
     }
 
-    pub async fn add_playout_node_to_peer(&self, addr: SocketAddr, mut playout_buffer_node : PlayoutBufferNode, fragment: Fragment){
-        let mut peers = self.peers.lock().await;
+    pub fn add_playout_node_to_peer(&self, addr: SocketAddr, mut playout_buffer_node : PlayoutBufferNode, fragment: Fragment){
+        let peers = &self.peers;
 
-        let Some(peer) = peers.get_mut(&addr) else {
+        let Some(mut peer) = peers.get_mut(&addr) else {
             return
         };
 
@@ -114,7 +114,17 @@ impl PeerManager {
         }
     }
 
-    pub async fn get_peers(&self) -> Vec<SocketAddr> {
-        self.peers.lock().await.keys().cloned().collect()
+    pub fn get_peers(&self) -> Vec<SocketAddr> {
+        self.peers.iter().map(|entry| entry.key().clone()).collect()
+    }
+
+    pub fn pop_node(&self, addr: SocketAddr) -> Option<PlayoutBufferNode> {
+        let mut peer = self.peers.get_mut(&addr)?;
+
+        let Some(node) = peer.playout_buffer.pop() else {
+            return  None;
+        };
+
+        Some(node)
     }
 }

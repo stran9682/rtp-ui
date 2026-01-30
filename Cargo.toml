@@ -9,3 +9,4 @@ crate-type = ["staticlib", "lib"]
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 bytes = "1.11.0"
+dashmap = "6.1.0"
