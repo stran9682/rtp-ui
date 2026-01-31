@@ -6,17 +6,18 @@
 //
 
 import SwiftUI
+import RTPmacos
 
 struct JoinView: View {
     
-    @Binding var state: AppState
+    @Binding var state: Bool
     @State private var address = ""
     
     var body: some View {
         
         VStack {
             Button(action: {
-                state.isPresented = false
+                state = false
             }, label: {
                 Text("Start Session")
             })
@@ -27,8 +28,10 @@ struct JoinView: View {
                 .frame(maxWidth: 200)
 
             Button(action: {
-                state.isPresented = false
-                state.address = address
+                state = false
+                address.withCString { pointer in
+                    rust_set_signalling_addr(pointer, UInt(strlen(pointer)))
+                }
             }, label: {
                 Text("Submit")
             })
