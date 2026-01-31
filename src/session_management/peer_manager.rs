@@ -71,7 +71,7 @@ impl PeerManager {
         }
     }
 
-    pub fn add_peer_get_min_window(&self, addr: SocketAddr, difference: u128) -> u128 {
+    pub fn peer_get_min_window(&self, addr: SocketAddr, difference: u128) -> u128 {
         let peers = &self.peers;
 
         if let Some(mut found_peer) = peers.get_mut(&addr) {

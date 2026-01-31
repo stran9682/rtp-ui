@@ -13,14 +13,6 @@ static FRAME_OUTPUT: OnceLock<Arc<PeerManager>> = OnceLock::new();
 
 const AVCC_HEADER_LENGTH: usize = 4;
 
-#[repr(C)]
-pub enum FrameType {
-    Pps,
-    Sps,
-    Keyframe,
-    Other
-}
-
 pub type ReleaseCallback = extern "C" fn(*mut std::ffi::c_void);
 
 pub struct EncodedFrame  {
@@ -324,7 +316,7 @@ pub async fn rtp_frame_receiver(
 
         let difference = arrival_time - header.timestamp as u128;
 
-        let offset = peer_manager.add_peer_get_min_window(addr, difference);
+        let offset = peer_manager.peer_get_min_window(addr, difference);
 
         let base_playout_time = header.timestamp as u128 + offset;
 
@@ -342,7 +334,7 @@ pub async fn rtp_frame_receiver(
 
         peer_manager.add_playout_node_to_peer(addr, node, fragment);
 
-        print!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
+        println!("{}: {}", addr.to_string(), str::from_utf8(&buffer[..bytes_read]).unwrap());
 
         // TODO : Send to swift
     }

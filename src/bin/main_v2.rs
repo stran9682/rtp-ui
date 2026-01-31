@@ -25,7 +25,7 @@ async fn main() -> io::Result<()> {
     if let Some(server_addr) = args.first() {
         println!("Connecting:");
 
-        if let Err(e) = connect_to_signaling_server(Some(server_addr), Arc::clone(&peer_manager), StreamType::Video).await {
+        if let Err(e) = connect_to_signaling_server(Some(server_addr.to_string()), Arc::clone(&peer_manager), StreamType::Video).await {
             eprintln!("server error getting addresses: {}", e);
         };
 

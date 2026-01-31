@@ -2,7 +2,7 @@ use core::slice;
 use std::{collections::HashSet, net::SocketAddr, sync::{Arc, OnceLock}};
 use bytes::{BufMut, Bytes, BytesMut};
 use dashmap::DashSet;
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::{Mutex, OnceCell, mpsc}};
+use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream }, sync::OnceCell};
 
 use crate::{interop::{StreamType, runtime}, session_management::peer_manager::PeerManager};
 
@@ -41,19 +41,14 @@ impl PeerSpecifications {
 }
 
 pub static PEER_SPECIFICATIONS : OnceLock<PeerSpecifications> = OnceLock::new();
+static SIGNALLING_ADDR: OnceLock<String> = OnceLock::new();
 
 #[unsafe(no_mangle)]
-pub extern "C" fn rust_send_h264_config (
-    pps: *const u8,
-    pps_length: usize,
-    sps: *const u8,
-    sps_length: usize,
+pub extern "C" fn rust_set_signalling_addr(
     host_addr: *const u8,
     host_addr_length: usize
-) {
-    let host_addr_str = if host_addr.is_null() {
-        None
-    } else {
+) { 
+    if !host_addr.is_null() {
         let host_addr_slice = unsafe {
             slice::from_raw_parts(host_addr, host_addr_length)
         };
@@ -62,9 +57,20 @@ pub extern "C" fn rust_send_h264_config (
             return;
         };
 
-        Some(host_addr_str)
-    };
-    
+        let _ = SIGNALLING_ADDR.set(host_addr_str.to_string());
+
+        println!("Set address!, {}", SIGNALLING_ADDR.get().unwrap())
+    } 
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rust_send_h264_config (
+    pps: *const u8,
+    pps_length: usize,
+    sps: *const u8,
+    sps_length: usize,
+) {
+ 
     let pps = unsafe {
         slice::from_raw_parts(pps, pps_length)
     };
@@ -79,9 +85,16 @@ pub extern "C" fn rust_send_h264_config (
 
     let _ = PEER_SPECIFICATIONS.set(PeerSpecifications::new(pps, sps));
 
+    let host_addr_str = match SIGNALLING_ADDR.get() {
+        Some(addr) => Some(addr.to_owned()),
+        None => None
+    };
+
     let frame_peer_clone = Arc::clone(&FRAME_PEERS.get().unwrap());
     runtime().spawn(async move {
-        connect_to_signaling_server(host_addr_str, frame_peer_clone, StreamType::Video)
+        if let Err(e) = connect_to_signaling_server(host_addr_str, frame_peer_clone, StreamType::Video).await {
+            eprintln!("Failed to connect to signaling server, {}", e)
+        }
     });
 }
 
@@ -125,7 +138,8 @@ pub async fn run_signaling_server (
             }
         }; 
 
-        // just twaddle until we get our own specs, awaiting a connection should hold this off
+        // just twaddle until we get our own specs, 
+        // awaiting a connection should hold this off
         if PEER_SPECIFICATIONS.get().is_none() { continue; } 
 
         println!("Request from {}", client_addr.to_string());
@@ -138,16 +152,6 @@ pub async fn run_signaling_server (
     }
 }
 
-
-enum Events {
-    Left,
-    Joined
-}
-
-async fn event_queue_handler(receiver : mpsc::Sender<Events>) {
-
-}
-
 async fn handle_signaling_client (
     socket : &mut TcpStream, 
 ) -> io::Result<()> {
@@ -158,16 +162,19 @@ async fn handle_signaling_client (
         return Ok(());
     }
 
-    let remote_addr_str = std::str::from_utf8(&buffer[..bytes_read])
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-    
-    // split 
-    let request: Vec<&str> = remote_addr_str
-        .lines()
-        .take_while(|line| !line.is_empty())
+    let data = Bytes::copy_from_slice(&buffer[..bytes_read]);
+
+    let request: Vec<&[u8]> = data
+        .split(|b| b == &0xA)
+        .map(|line| line.strip_suffix(&[0xD])
+        .unwrap_or(line))
         .collect();
 
-    let (stream_type, peer_manager) = match request[0] {
+    let Ok(media_type) = str::from_utf8(request[0]) else {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Unable to parse media type"));
+    };
+
+    let (stream_type, peer_manager) = match media_type {
         "video" => (StreamType::Video,  FRAME_PEERS.get()),
         "audio" => (StreamType::Audio, AUDIO_PEERS.get()),
         _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Not a valid type"))
@@ -179,7 +186,7 @@ async fn handle_signaling_client (
 
     let mut response = BytesMut::new();
 
-    let header = format!("{}\r\n{}\r\n", request[0], peer_manager.local_addr);
+    let header = format!("{}\r\n{}\r\n", media_type, peer_manager.local_addr);
     response.put(header.as_bytes());
 
     let Some(specifications) = PEER_SPECIFICATIONS.get() else {
@@ -205,13 +212,19 @@ async fn handle_signaling_client (
 
     socket.write_all(&response).await?;
 
-    let signaling_addr: SocketAddr = request[1]
+    let signaling_addr: SocketAddr = str::from_utf8(request[1])
+        .map_err(|e| io::Error::new(
+            io::ErrorKind::InvalidData, 
+            format!("Somemone sent you a faulty signaling address. {}", e)))?
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     specifications.add_peer(signaling_addr);
 
-    let media_addr: SocketAddr = request[2]
+    let media_addr: SocketAddr = str::from_utf8(request[2])
+        .map_err(|e| io::Error::new(
+            io::ErrorKind::InvalidData, 
+            format!("Somemone sent you a faulty signaling address. {}", e)))?
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -223,7 +236,7 @@ async fn handle_signaling_client (
 }
 
 pub async fn connect_to_signaling_server(
-    server_addr: Option<&str>,
+    server_addr: Option<String>,
     peer_manager: Arc<PeerManager>,
     stream_type : StreamType
 ) -> io::Result<()> {
@@ -269,17 +282,14 @@ pub async fn connect_to_signaling_server(
     }
 
     let mut addresses: Vec<String> = Vec::new();
-    add_peers(&peer_manager, server_addr, &packet, &mut addresses).await?;
-
-    // do something with the PPS and SPS data
-    // update swift ui
+    add_peers(&peer_manager, &server_addr, &packet, &mut addresses).await?;
 
     for signaling_addr in &addresses {
         // throwaway vector lol. don't do this.
-        add_peers(&peer_manager, signaling_addr, &packet, &mut Vec::new()).await?;
-
-        // do something with sps and pps data
-        // update swift ui
+        if let Err(e) = add_peers(&peer_manager, signaling_addr, &packet, &mut Vec::new()).await {
+            eprint!("Error! : {}", e);
+            continue;
+        }
     }
 
     Ok(())
@@ -290,21 +300,25 @@ async fn add_peers (peer_manager: &Arc<PeerManager>, signaling_addr: &str, packe
     let mut socket = TcpStream::connect(signaling_addr).await?;
     
     socket.write_all(&packet).await?;
+    
     let bytes_read = socket.read(&mut buffer).await?;
 
     if bytes_read == 0 {
         return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "No response from server"));
     }
 
-    let responses = str::from_utf8(&buffer[..bytes_read])
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let data = Bytes::copy_from_slice(&buffer[..bytes_read]);   
 
-    let responses: Vec<&str> = responses
-        .lines()
-        .take_while(|line| !line.is_empty())
+    let data: Vec<&[u8]> = data
+        .split(|b| b == &0xA)
+        .map(|line| line.strip_suffix(&[0xD])
+        .unwrap_or(line))
         .collect();
 
-    let media_addr: SocketAddr = responses[1]
+    let media_addr: SocketAddr = str::from_utf8(data[1])
+        .map_err(|e| io::Error::new(
+            io::ErrorKind::AddrNotAvailable, 
+            format!("Failed to prase address, {}", e)))?
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -316,11 +330,17 @@ async fn add_peers (peer_manager: &Arc<PeerManager>, signaling_addr: &str, packe
 
     PEER_SPECIFICATIONS.get().unwrap().add_peer(signaling_addr);
 
-    println!("{:?}", responses);
-
-    for response in &responses[4..] {
-        addresses.push(response.to_string());
+    for response in &data[4..] {
+        let Ok(str) = str::from_utf8(response) else {
+            continue;
+        };
+        
+        addresses.push(str.to_string());
     }
+
+    // TODO:
+    // do something with sps and pps data
+    // update swift ui
 
     Ok(())
 }

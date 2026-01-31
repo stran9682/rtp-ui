@@ -10,12 +10,12 @@ typedef enum StreamType {
 
 typedef void (*ReleaseCallback)(void*);
 
+void rust_set_signalling_addr(const uint8_t *host_addr, uintptr_t host_addr_length);
+
 void rust_send_h264_config(const uint8_t *pps,
                            uintptr_t pps_length,
                            const uint8_t *sps,
-                           uintptr_t sps_length,
-                           const uint8_t *host_addr,
-                           uintptr_t host_addr_length);
+                           uintptr_t sps_length);
 
 bool rust_send_frame(const uint8_t *data,
                      uintptr_t len,
