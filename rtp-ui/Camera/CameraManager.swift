@@ -138,7 +138,8 @@ extension CameraManager : AVCaptureVideoDataOutputSampleBufferDelegate { // hone
         addToPreviewStream?(currentFrame)
         
         guard let session = compressionSession,
-              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+              let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer)
+        else {
             return
         }
         
