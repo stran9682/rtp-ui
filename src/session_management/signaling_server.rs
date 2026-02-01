@@ -11,7 +11,24 @@ const BUFFER_SIZE: usize = 1500;
 static AUDIO_PEERS: OnceLock<Arc<PeerManager>> = OnceLock::new();
 static FRAME_PEERS: OnceLock<Arc<PeerManager>> = OnceLock::new();
 static LISTENER: OnceCell<TcpListener> = OnceCell::const_new();
+static VIDEO_CONTEXT: OnceLock<SpsPpsContext> = OnceLock::new();
 
+pub type SpsPpsCallback = extern "C" fn(
+    context: *mut std::ffi::c_void, 
+    pps: *const u8, 
+    pps_length: usize, 
+    sps: *const u8, 
+    sps_length: usize
+);
+
+struct SpsPpsContext {
+    context: *mut std::ffi::c_void,
+    callback: SpsPpsCallback
+}
+
+// BAD BAD BAD!
+unsafe impl Send for SpsPpsContext { }
+unsafe impl Sync for SpsPpsContext { }
 
 struct H264Args{
     sps: Bytes,
@@ -64,6 +81,11 @@ pub extern "C" fn rust_set_signalling_addr(
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn rust_send_video_callback (context: *mut std::ffi::c_void, callback: SpsPpsCallback){
+    let _ = VIDEO_CONTEXT.set(SpsPpsContext { context, callback });
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn rust_send_h264_config (
     pps: *const u8,
     pps_length: usize,
@@ -90,7 +112,12 @@ pub extern "C" fn rust_send_h264_config (
         None => None
     };
 
-    let frame_peer_clone = Arc::clone(&FRAME_PEERS.get().unwrap());
+    let Some(frame_peers) = FRAME_PEERS.get() else {
+        eprintln!("Frame peer manager not set yet, have you called run_runtime_server first?");
+        return;
+    };
+
+    let frame_peer_clone = Arc::clone(&frame_peers);
     runtime().spawn(async move {
         if let Err(e) = connect_to_signaling_server(host_addr_str, frame_peer_clone, StreamType::Video).await {
             eprintln!("Failed to connect to signaling server, {}", e)
@@ -124,10 +151,6 @@ pub async fn run_signaling_server (
     }
 
     println!("{}", listener().await.local_addr().unwrap());
-
-    runtime().spawn(async move {
-
-    });
 
     loop {
         let (mut socket, client_addr) = match listener().await.accept().await {
@@ -219,18 +242,19 @@ async fn handle_signaling_client (
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    specifications.add_peer(signaling_addr);
-
     let media_addr: SocketAddr = str::from_utf8(request[2])
         .map_err(|e| io::Error::new(
             io::ErrorKind::InvalidData, 
-            format!("Somemone sent you a faulty signaling address. {}", e)))?
+            format!("Somemone sent you a faulty media address. {}", e)))?
         .parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     peer_manager.add_peer(media_addr);
+    specifications.add_peer(signaling_addr);
 
-    // TODO: Update UI
+    let context = VIDEO_CONTEXT.get().unwrap();
+
+    (context.callback)(context.context, request[3].as_ptr(), request[3].len(), request[4].as_ptr(), request[4].len());
 
    Ok(()) 
 }
@@ -338,9 +362,8 @@ async fn add_peers (peer_manager: &Arc<PeerManager>, signaling_addr: &str, packe
         addresses.push(str.to_string());
     }
 
-    // TODO:
-    // do something with sps and pps data
-    // update swift ui
+    let context = VIDEO_CONTEXT.get().unwrap();
 
+    (context.callback)(context.context, data[2].as_ptr(), data[2].len(), data[3].as_ptr(), data[3].len());
     Ok(())
 }
