@@ -8,35 +8,41 @@
 import Foundation
 import VideoToolbox
 
-class DecompressionManager {
+class VideoManager {
     var session: VTDecompressionSession?
+    
+    var callback: VTDecompressionOutputCallback = { refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, time, duration in
+        guard let refcon = refcon,
+              status == noErr,
+              let imageBuffer = imageBuffer
+        else {
+            print("VTDecompressionOutputCallback \(status)")
+            return
+        }
         
-    init (sps: UnsafePointer<UInt8>, spsLength: Int, pps: UnsafePointer<UInt8>, ppsLength: Int) {
+        let decoder = Unmanaged<VideoManager>.fromOpaque(refcon).takeUnretainedValue()
+        decoder.processImage(imageBuffer, time: time, duration: duration)
+    }
+    
+    init (sps: UnsafePointer<UInt8>, pps: UnsafePointer<UInt8>) {
+        
+
        
-        let paramSetPointers: [UnsafePointer<UInt8>] = [sps, pps]
+        let paramSetPointers: [UnsafePointer<UInt8>] = [UnsafePointer(sps), UnsafePointer(pps)]
         
-        let parameterSetSizes: [Int] = [spsLength, ppsLength]
-                
-        var formatDescription: CMFormatDescription?
-        
-        CMVideoFormatDescriptionCreateFromH264ParameterSets(
-            allocator: kCFAllocatorDefault,
-            parameterSetCount: 2,
-            parameterSetPointers: paramSetPointers,
-            parameterSetSizes: parameterSetSizes,
-            nalUnitHeaderLength: 4,
-            formatDescriptionOut: &formatDescription
-        )
+        let parameterSetSizes: [Int] = [0, 0]
         
         let decoderSpecification = [
             kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true as CFBoolean
         ] as CFDictionary
         
+        
+        var formatDescription: CMFormatDescription?
+        
+        CMVideoFormatDescriptionCreateFromH264ParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: 2, parameterSetPointers: paramSetPointers, parameterSetSizes: parameterSetSizes, nalUnitHeaderLength: 4, formatDescriptionOut: &formatDescription)
+        
         let refcon = Unmanaged.passUnretained(self).toOpaque()
-        var callbackRecord = VTDecompressionOutputCallbackRecord(
-            decompressionOutputCallback: callback,
-            decompressionOutputRefCon: refcon
-        )
+        var callbackRecord = VTDecompressionOutputCallbackRecord(decompressionOutputCallback: callback, decompressionOutputRefCon: refcon)
         
         if let formatDescription = formatDescription {
             VTDecompressionSessionCreate(
@@ -50,17 +56,11 @@ class DecompressionManager {
     }
     
     func processImage(_ image: CVImageBuffer, time: CMTime, duration: CMTime) {
-        
         var sampleBuffer: CMSampleBuffer?
         var sampleTiming = CMSampleTimingInfo(duration: duration, presentationTimeStamp: time, decodeTimeStamp: time)
 
         var formatDesc: CMFormatDescription? = nil
-        CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: image,
-            formatDescriptionOut: &formatDesc
-        )
-        
+        CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: image, formatDescriptionOut: &formatDesc)
         guard let formatDescription = formatDesc else {
             fatalError("formatDescription")
         }
@@ -79,17 +79,4 @@ class DecompressionManager {
 //            handler?(sb)
 //        }
     }
-}
-
-var callback: VTDecompressionOutputCallback = { refcon, sourceFrameRefCon, status, infoFlags, imageBuffer, time, duration in
-    guard let refcon = refcon,
-          status == noErr,
-          let imageBuffer = imageBuffer
-    else {
-        print("VTDecompressionOutputCallback \(status)")
-        return
-    }
-    
-    let decoder = Unmanaged<DecompressionManager>.fromOpaque(refcon).takeUnretainedValue()
-    decoder.processImage(imageBuffer, time: time, duration: duration)
 }
